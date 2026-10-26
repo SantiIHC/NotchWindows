@@ -1,0 +1,383 @@
+<Window x:Class="IslaDinamica.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="IslaDinamica" Width="440" Height="175"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        Topmost="True" ShowInTaskbar="False" ResizeMode="NoResize"
+        WindowStartupLocation="Manual" Loaded="Window_Loaded">
+
+    <Window.Resources>
+        <!-- Botón secundario circular (Anterior / Siguiente) con icono vectorial -->
+        <Style x:Key="MediaCircleBtn" TargetType="Button">
+            <Setter Property="Width" Value="30"/>
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Background" Value="#17171D"/>
+            <Setter Property="BorderBrush" Value="#2A2A34"/>
+            <Setter Property="Foreground" Value="#E5E5EA"/>
+            <Setter Property="RenderTransformOrigin" Value="0.5,0.5"/>
+            <Setter Property="RenderTransform">
+                <Setter.Value>
+                    <ScaleTransform ScaleX="1" ScaleY="1"/>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="BtnBorder" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1"
+                                CornerRadius="15">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="BtnBorder" Property="Background" Value="#262630"/>
+                                <Setter TargetName="BtnBorder" Property="BorderBrush" Value="#424252"/>
+                                <Setter Property="Foreground" Value="#FFFFFF"/>
+                                <Trigger.EnterActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleX" To="1.1" Duration="0:0:0.12"/>
+                                            <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleY" To="1.1" Duration="0:0:0.12"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.EnterActions>
+                                <Trigger.ExitActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleX" To="1.0" Duration="0:0:0.12"/>
+                                            <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleY" To="1.0" Duration="0:0:0.12"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.ExitActions>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="BtnBorder" Property="Background" Value="#323240"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Botón principal circular Play/Pausa estilo Apple/Spotify (fondo blanco brillante) -->
+        <Style x:Key="MediaPlayPrimaryBtn" TargetType="Button">
+            <Setter Property="Width" Value="34"/>
+            <Setter Property="Height" Value="34"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Background" Value="#F5F5F7"/>
+            <Setter Property="Foreground" Value="#07070A"/>
+            <Setter Property="Margin" Value="10,0"/>
+            <Setter Property="RenderTransformOrigin" Value="0.5,0.5"/>
+            <Setter Property="RenderTransform">
+                <Setter.Value>
+                    <ScaleTransform ScaleX="1" ScaleY="1"/>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="PlayBorder" Background="{TemplateBinding Background}"
+                                CornerRadius="17">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="PlayBorder" Property="Background" Value="#FFFFFF"/>
+                                <Trigger.EnterActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleX" To="1.12" Duration="0:0:0.12"/>
+                                            <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleY" To="1.12" Duration="0:0:0.12"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.EnterActions>
+                                <Trigger.ExitActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleX" To="1.0" Duration="0:0:0.12"/>
+                                            <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleY" To="1.0" Duration="0:0:0.12"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.ExitActions>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="PlayBorder" Property="Background" Value="#DCDCE2"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Estilo para las pestañas/selectores y botones de acción de descarga -->
+        <Style x:Key="TabPillBtn" TargetType="Button">
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Foreground" Value="#98989F"/>
+            <Setter Property="Background" Value="#161618"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Margin" Value="4,0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="PillBorder" Background="{TemplateBinding Background}"
+                                BorderBrush="#26262A" BorderThickness="1"
+                                CornerRadius="10" Padding="10,3">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="PillBorder" Property="BorderBrush" Value="#45454C"/>
+                                <Setter Property="Foreground" Value="White"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Grid>
+        <Border x:Name="Island" Background="#050507" CornerRadius="0,0,20,20"
+                BorderThickness="1,0,1,1"
+                Width="196" Height="36" HorizontalAlignment="Center" VerticalAlignment="Top"
+                ClipToBounds="True" MouseEnter="Island_MouseEnter" MouseLeave="Island_MouseLeave">
+            <Border.BorderBrush>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                    <GradientStop Color="#1F1F24" Offset="0"/>
+                    <GradientStop Color="#2E2E36" Offset="1"/>
+                </LinearGradientBrush>
+            </Border.BorderBrush>
+            <Border.ContextMenu>
+                <ContextMenu>
+                    <MenuItem Header="Salir" Click="Exit_Click"/>
+                </ContextMenu>
+            </Border.ContextMenu>
+
+            <Grid>
+                <!-- ==================== VISTA COMPACTA (EN REPOSO) ==================== -->
+                <Grid x:Name="CompactBar" Margin="12,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="36"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="36"/>
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Izquierda: Círculo verde de progreso de descarga -->
+                    <Grid x:Name="CompactDlIndicator" Grid.Column="0" Width="22" Height="22"
+                          HorizontalAlignment="Left" VerticalAlignment="Center"
+                          Visibility="Collapsed" Cursor="Hand" ToolTip="Ver descarga"
+                          Background="Transparent" MouseLeftButtonDown="CompactDl_Click">
+                        <Ellipse Width="20" Height="20" Stroke="#1C3824" StrokeThickness="2.4"/>
+                        <Ellipse x:Name="CompactDlRing" Width="20" Height="20"
+                                 Stroke="#30D158" StrokeThickness="2.4"
+                                 StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                 StrokeDashArray="0 100" RenderTransformOrigin="0.5,0.5">
+                            <Ellipse.RenderTransform>
+                                <RotateTransform x:Name="CompactDlRingRotate" Angle="-90"/>
+                            </Ellipse.RenderTransform>
+                        </Ellipse>
+                        <TextBlock x:Name="CompactDlIcon" Text="⬇" Foreground="#30D158" FontSize="9"
+                                   FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Grid>
+
+                    <!-- Centro: Hora actual -->
+                    <TextBlock x:Name="ClockText" Grid.Column="1" Text="12:00"
+                               Foreground="#F5F5F7" FontSize="12.5" FontWeight="SemiBold"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               Cursor="Hand" MouseLeftButtonDown="Clock_Click"/>
+
+                    <!-- Derecha: Ecualizador animado de música -->
+                    <Grid x:Name="CompactMusicIndicator" Grid.Column="2" Width="26" Height="20"
+                          HorizontalAlignment="Right" VerticalAlignment="Center"
+                          Visibility="Collapsed" Cursor="Hand" ToolTip="Ver música"
+                          Background="Transparent" MouseLeftButtonDown="CompactMusic_Click">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center" Height="14">
+                            <Border x:Name="EqBar1" Width="2.6" Height="5" CornerRadius="1.3" Background="#FF375F" Margin="1,0" VerticalAlignment="Center"/>
+                            <Border x:Name="EqBar2" Width="2.6" Height="11" CornerRadius="1.3" Background="#FF9F0A" Margin="1,0" VerticalAlignment="Center"/>
+                            <Border x:Name="EqBar3" Width="2.6" Height="7" CornerRadius="1.3" Background="#30D158" Margin="1,0" VerticalAlignment="Center"/>
+                            <Border x:Name="EqBar4" Width="2.6" Height="10" CornerRadius="1.3" Background="#64D2FF" Margin="1,0" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Grid>
+                </Grid>
+
+                <!-- ==================== VISTA EXPANDIDA ==================== -->
+                <Grid x:Name="ExpandedPanel" Opacity="0" Margin="16,12,16,14" IsHitTestVisible="False">
+                    <Grid.RenderTransform>
+                        <TranslateTransform x:Name="ExpandedSlide" Y="-6"/>
+                    </Grid.RenderTransform>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- Barra superior: Hora a la izquierda + selectores clickeables (Música / Descargas) a la derecha -->
+                    <Grid Grid.Row="0" Margin="0,0,0,8">
+                        <TextBlock x:Name="ExpandedClockText" Text="12:00" Foreground="#8E8E93"
+                                   FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
+
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                            <Button x:Name="TabMusicBtn" Style="{StaticResource TabPillBtn}" Click="TabMusic_Click">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="♪ " Foreground="#FF375F" FontWeight="Bold"/>
+                                    <TextBlock Text="Música"/>
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="TabDlBtn" Style="{StaticResource TabPillBtn}" Click="TabDl_Click">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="● " Foreground="#30D158" FontSize="9" VerticalAlignment="Center"/>
+                                    <TextBlock Text="Descargas"/>
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- Contenido del panel seleccionado -->
+                    <Grid x:Name="ContentHost" Grid.Row="1">
+                        <Grid.RenderTransform>
+                            <TranslateTransform x:Name="ContentSlide" Y="0"/>
+                        </Grid.RenderTransform>
+
+                        <!-- ==================== PANEL DE MÚSICA ==================== -->
+                        <Grid x:Name="MusicPanel">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="70"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+
+                            <Border CornerRadius="13" Width="70" Height="70" Background="#141418"
+                                    BorderBrush="#26262E" BorderThickness="1" ClipToBounds="True">
+                                <Grid>
+                                    <TextBlock Text="♪" Foreground="#3A3A44" FontSize="24"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    <Image x:Name="Cover" Stretch="UniformToFill"/>
+                                </Grid>
+                            </Border>
+
+                            <Grid Grid.Column="1" Margin="14,0,0,0" VerticalAlignment="Center">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+
+                                <!-- Título y Artista a la izquierda + Botones circulares vectoriales a la derecha -->
+                                <Grid Grid.Row="0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,8,0">
+                                        <TextBlock x:Name="TitleText" Text="Sin reproducción" Foreground="#F5F5F7" FontSize="14"
+                                                   FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock x:Name="ArtistText" Text="Spotify o navegador" Foreground="#8E8E93" FontSize="11.5"
+                                                   TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
+                                    </StackPanel>
+
+                                    <!-- Controles vectoriales premium (Anterior · Play/Pausa · Siguiente) -->
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                        <!-- Anterior -->
+                                        <Button Style="{StaticResource MediaCircleBtn}" Click="Prev_Click" ToolTip="Anterior">
+                                            <Path Data="M 0,1 L 2,1 L 2,11 L 0,11 Z M 3.2,6 L 10.5,1 L 10.5,11 Z"
+                                                  Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                                  Stretch="Uniform" Width="10" Height="10"/>
+                                        </Button>
+
+                                        <!-- Play / Pausa (Botón central blanco brillante) -->
+                                        <Button x:Name="PlayBtn" Style="{StaticResource MediaPlayPrimaryBtn}" Click="Play_Click" ToolTip="Reproducir / Pausar">
+                                            <Path x:Name="PlayPauseIconPath"
+                                                  Data="M 2,0 L 11,6 L 2,12 Z"
+                                                  Fill="#07070A" Stretch="Uniform" Width="11" Height="11" Margin="1,0,0,0"/>
+                                        </Button>
+
+                                        <!-- Siguiente -->
+                                        <Button Style="{StaticResource MediaCircleBtn}" Click="Next_Click" ToolTip="Siguiente">
+                                            <Path Data="M 8.5,1 L 10.5,1 L 10.5,11 L 8.5,11 Z M 0,1 L 7.3,6 L 0,11 Z"
+                                                  Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                                  Stretch="Uniform" Width="10" Height="10"/>
+                                        </Button>
+                                    </StackPanel>
+                                </Grid>
+
+                                <!-- Barra de progreso de la canción -->
+                                <Grid x:Name="ProgressTrack" Grid.Row="1" Height="4.5" Margin="0,12,0,0">
+                                    <Border Background="#24242C" CornerRadius="2.2"/>
+                                    <Border x:Name="ProgressFill" Background="#F5F5F7" CornerRadius="2.2"
+                                            HorizontalAlignment="Left" Width="0"/>
+                                </Grid>
+                            </Grid>
+                        </Grid>
+
+                        <!-- ==================== PANEL DE DESCARGAS ==================== -->
+                        <Grid x:Name="DownloadPanel" Visibility="Collapsed">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="56"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+
+                            <!-- Círculo grande de progreso verde en el panel expandido -->
+                            <Grid Width="56" Height="56" VerticalAlignment="Center">
+                                <Ellipse Width="52" Height="52" Fill="#0F1F15" Stroke="#1C3824" StrokeThickness="3.5"/>
+                                <Ellipse x:Name="ExpandedDlRing" Width="52" Height="52"
+                                         Stroke="#30D158" StrokeThickness="3.5"
+                                         StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                         StrokeDashArray="0 100" RenderTransformOrigin="0.5,0.5">
+                                    <Ellipse.RenderTransform>
+                                        <RotateTransform Angle="-90"/>
+                                    </Ellipse.RenderTransform>
+                                </Ellipse>
+                                <TextBlock x:Name="DlIcon" Text="⬇" Foreground="#30D158" FontSize="20"
+                                           FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Grid>
+
+                            <Grid Grid.Column="1" Margin="14,0,0,0" VerticalAlignment="Center">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+
+                                <!-- Cabecera de descarga + Botón Pausar/Continuar a la derecha -->
+                                <Grid Grid.Row="0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,8,0">
+                                        <TextBlock x:Name="DlTitle" Text="Sin descargas activas" Foreground="#F5F5F7" FontSize="14"
+                                                   FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock x:Name="DlSub" Text="Las descargas de navegador y Steam aparecerán aquí" Foreground="#8E8E93" FontSize="11.5"
+                                                   TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
+                                    </StackPanel>
+
+                                    <!-- Botón Pausar / Continuar descarga -->
+                                    <Button x:Name="DlPauseResumeBtn" Grid.Column="1" Style="{StaticResource MediaCircleBtn}"
+                                            Width="32" Height="32" Visibility="Collapsed"
+                                            Click="DlPauseResume_Click" ToolTip="Pausar / Continuar descarga">
+                                        <Path x:Name="DlPauseResumePath"
+                                              Data="M 1,0 L 4,0 L 4,11 L 1,11 Z M 7,0 L 10,0 L 10,11 L 7,11 Z"
+                                              Fill="#30D158" Stretch="Uniform" Width="10" Height="10"/>
+                                    </Button>
+                                </Grid>
+
+                                <Grid x:Name="DlProgressTrack" Grid.Row="1" Height="4.5" Margin="0,10,0,0" Visibility="Collapsed">
+                                    <Border Background="#1C3824" CornerRadius="2.2"/>
+                                    <Border x:Name="DlProgressFill" Background="#30D158" CornerRadius="2.2"
+                                            HorizontalAlignment="Left" Width="0"/>
+                                </Grid>
+
+                                <Button x:Name="OpenBtn" Grid.Row="2" Style="{StaticResource TabPillBtn}"
+                                        Content="Abrir ubicación ↗" FontSize="11.5" Margin="0,8,0,0"
+                                        HorizontalAlignment="Left" Foreground="#30D158"
+                                        Visibility="Collapsed" Click="OpenFolder_Click"/>
+                            </Grid>
+                        </Grid>
+                    </Grid>
+                </Grid>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>
