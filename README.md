@@ -1,2 +1,0 @@
-# NotchWindows
-Notch for Windows
