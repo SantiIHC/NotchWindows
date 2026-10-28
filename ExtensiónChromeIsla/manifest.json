@@ -1,0 +1,9 @@
+{
+  "manifest_version": 3,
+  "name": "Isla Dinámica – Descargas",
+  "version": "1.1",
+  "description": "Envía el progreso real de tus descargas a la Isla Dinámica y permite pausarlas y reanudarlas desde ella.",
+  "permissions": ["downloads", "alarms"],
+  "host_permissions": ["http://127.0.0.1:47831/*"],
+  "background": { "service_worker": "background.js" }
+}

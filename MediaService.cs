@@ -115,6 +115,26 @@ public class MediaService
         catch { return (0, false); }
     }
 
+    /// <summary>Posición y duración en segundos. ok=false si la app no reporta duración.</summary>
+    public (double Position, double Total, bool Ok) GetTimes()
+    {
+        if (_session == null) return (0, 0, false);
+        try
+        {
+            var t = _session.GetTimelineProperties();
+            var total = (t.EndTime - t.StartTime).TotalSeconds;
+            if (total <= 0) return (0, 0, false);
+
+            var pos = (t.Position - t.StartTime).TotalSeconds;
+            var playing = _session.GetPlaybackInfo().PlaybackStatus ==
+                          GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
+            if (playing) pos += (DateTimeOffset.Now - t.LastUpdatedTime).TotalSeconds;
+
+            return (Math.Clamp(pos, 0, total), total, true);
+        }
+        catch { return (0, 0, false); }
+    }
+
     public async Task PlayPause() { if (_session != null) await _session.TryTogglePlayPauseAsync(); }
     public async Task Next()      { if (_session != null) await _session.TrySkipNextAsync(); }
     public async Task Previous()  { if (_session != null) await _session.TrySkipPreviousAsync(); }

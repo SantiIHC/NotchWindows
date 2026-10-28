@@ -141,7 +141,7 @@
     <Grid>
         <Border x:Name="Island" Background="#050507" CornerRadius="0,0,20,20"
                 BorderThickness="1,0,1,1"
-                Width="196" Height="36" HorizontalAlignment="Center" VerticalAlignment="Top"
+                Width="240" Height="36" HorizontalAlignment="Center" VerticalAlignment="Top"
                 ClipToBounds="True" MouseEnter="Island_MouseEnter" MouseLeave="Island_MouseLeave">
             <Border.BorderBrush>
                 <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
@@ -157,11 +157,11 @@
 
             <Grid>
                 <!-- ==================== VISTA COMPACTA (EN REPOSO) ==================== -->
-                <Grid x:Name="CompactBar" Margin="12,0">
+                <Grid x:Name="CompactBar" Margin="10,0">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="36"/>
+                        <ColumnDefinition Width="82"/>
                         <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="36"/>
+                        <ColumnDefinition Width="82"/>
                     </Grid.ColumnDefinitions>
 
                     <!-- Izquierda: Círculo verde de progreso de descarga -->
@@ -188,18 +188,38 @@
                                HorizontalAlignment="Center" VerticalAlignment="Center"
                                Cursor="Hand" MouseLeftButtonDown="Clock_Click"/>
 
-                    <!-- Derecha: Ecualizador animado de música -->
-                    <Grid x:Name="CompactMusicIndicator" Grid.Column="2" Width="26" Height="20"
-                          HorizontalAlignment="Right" VerticalAlignment="Center"
-                          Visibility="Collapsed" Cursor="Hand" ToolTip="Ver música"
-                          Background="Transparent" MouseLeftButtonDown="CompactMusic_Click">
-                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center" Height="14">
-                            <Border x:Name="EqBar1" Width="2.6" Height="5" CornerRadius="1.3" Background="#FF375F" Margin="1,0" VerticalAlignment="Center"/>
-                            <Border x:Name="EqBar2" Width="2.6" Height="11" CornerRadius="1.3" Background="#FF9F0A" Margin="1,0" VerticalAlignment="Center"/>
-                            <Border x:Name="EqBar3" Width="2.6" Height="7" CornerRadius="1.3" Background="#30D158" Margin="1,0" VerticalAlignment="Center"/>
-                            <Border x:Name="EqBar4" Width="2.6" Height="10" CornerRadius="1.3" Background="#64D2FF" Margin="1,0" VerticalAlignment="Center"/>
+                    <!-- Derecha: Ecualizador animado de música + batería -->
+                    <StackPanel Grid.Column="2" Orientation="Horizontal"
+                                HorizontalAlignment="Right" VerticalAlignment="Center">
+                        <Grid x:Name="CompactMusicIndicator" Width="26" Height="20" Margin="0,0,6,0"
+                              VerticalAlignment="Center"
+                              Visibility="Collapsed" Cursor="Hand" ToolTip="Ver música"
+                              Background="Transparent" MouseLeftButtonDown="CompactMusic_Click">
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center" Height="14">
+                                <Border x:Name="EqBar1" Width="2.6" Height="5" CornerRadius="1.3" Background="#F5F5F7" Margin="1,0" VerticalAlignment="Center"/>
+                                <Border x:Name="EqBar2" Width="2.6" Height="11" CornerRadius="1.3" Background="#F5F5F7" Margin="1,0" VerticalAlignment="Center"/>
+                                <Border x:Name="EqBar3" Width="2.6" Height="7" CornerRadius="1.3" Background="#F5F5F7" Margin="1,0" VerticalAlignment="Center"/>
+                                <Border x:Name="EqBar4" Width="2.6" Height="10" CornerRadius="1.3" Background="#F5F5F7" Margin="1,0" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- Batería: porcentaje + icono (se oculta si el equipo no tiene batería) -->
+                        <StackPanel x:Name="CompactBatteryIndicator" Orientation="Horizontal" VerticalAlignment="Center"
+                                    Visibility="Collapsed" Cursor="Hand" ToolTip="Ver batería"
+                                    Background="Transparent" MouseLeftButtonDown="CompactBattery_Click">
+                            <TextBlock x:Name="CompactBatteryText" Text="100%" Foreground="#F5F5F7"
+                                       FontSize="10.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            <Grid Width="21" Height="10" Margin="4,0,0,0" VerticalAlignment="Center">
+                                <Border Width="18" Height="10" HorizontalAlignment="Left"
+                                        BorderBrush="#6E6E78" BorderThickness="1" CornerRadius="3"/>
+                                <Border x:Name="CompactBatteryFill" Height="6" Width="14" Margin="2,0,0,0"
+                                        HorizontalAlignment="Left" VerticalAlignment="Center"
+                                        CornerRadius="1.5" Background="#F5F5F7"/>
+                                <Border Width="2" Height="4" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                        Background="#6E6E78" CornerRadius="0,1,1,0"/>
+                            </Grid>
                         </StackPanel>
-                    </Grid>
+                    </StackPanel>
                 </Grid>
 
                 <!-- ==================== VISTA EXPANDIDA ==================== -->
@@ -218,6 +238,12 @@
                                    FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
 
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                            <Button x:Name="TabSummaryBtn" Style="{StaticResource TabPillBtn}" Click="TabSummary_Click">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="● " Foreground="#64D2FF" FontSize="9" VerticalAlignment="Center"/>
+                                    <TextBlock Text="Resumen"/>
+                                </StackPanel>
+                            </Button>
                             <Button x:Name="TabMusicBtn" Style="{StaticResource TabPillBtn}" Click="TabMusic_Click">
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="♪ " Foreground="#FF375F" FontWeight="Bold"/>
@@ -239,75 +265,128 @@
                             <TranslateTransform x:Name="ContentSlide" Y="0"/>
                         </Grid.RenderTransform>
 
-                        <!-- ==================== PANEL DE MÚSICA ==================== -->
-                        <Grid x:Name="MusicPanel">
+                        <!-- ==================== PANEL DE RESUMEN (BATERÍA) ==================== -->
+                        <Grid x:Name="SummaryPanel" Visibility="Collapsed">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="70"/>
+                                <ColumnDefinition Width="56"/>
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
 
-                            <Border CornerRadius="13" Width="70" Height="70" Background="#141418"
-                                    BorderBrush="#26262E" BorderThickness="1" ClipToBounds="True">
-                                <Grid>
-                                    <TextBlock Text="♪" Foreground="#3A3A44" FontSize="24"
-                                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                    <Image x:Name="Cover" Stretch="UniformToFill"/>
-                                </Grid>
-                            </Border>
+                            <!-- Anillo de batería -->
+                            <Grid Width="56" Height="56" VerticalAlignment="Center">
+                                <Ellipse Width="52" Height="52" Fill="#141418" Stroke="#26262E" StrokeThickness="3.5"/>
+                                <Ellipse x:Name="BatteryRing" Width="52" Height="52"
+                                         Stroke="#30D158" StrokeThickness="3.5"
+                                         StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                         StrokeDashArray="0 100" RenderTransformOrigin="0.5,0.5">
+                                    <Ellipse.RenderTransform>
+                                        <RotateTransform Angle="-90"/>
+                                    </Ellipse.RenderTransform>
+                                </Ellipse>
+                                <TextBlock x:Name="BatteryRingText" Text="--" Foreground="#F5F5F7" FontSize="15"
+                                           FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Grid>
 
-                            <Grid Grid.Column="1" Margin="14,0,0,0" VerticalAlignment="Center">
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto"/>
-                                    <RowDefinition Height="Auto"/>
-                                    <RowDefinition Height="Auto"/>
-                                </Grid.RowDefinitions>
-
-                                <!-- Título y Artista a la izquierda + Botones circulares vectoriales a la derecha -->
-                                <Grid Grid.Row="0">
+                            <StackPanel Grid.Column="1" Margin="14,0,0,0" VerticalAlignment="Center">
+                                <TextBlock x:Name="BatteryTitle" Text="Batería" Foreground="#F5F5F7" FontSize="14"
+                                           FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                <TextBlock x:Name="BatterySub" Text="Leyendo estado…" Foreground="#8E8E93" FontSize="11.5"
+                                           TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
+                                <Grid x:Name="BatteryBarTrack" Height="4.5" Margin="0,10,0,0">
                                     <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition x:Name="BatteryBarCol0" Width="0*"/>
+                                        <ColumnDefinition x:Name="BatteryBarCol1" Width="1*"/>
                                     </Grid.ColumnDefinitions>
+                                    <Border Grid.ColumnSpan="2" Background="#24242C" CornerRadius="2.2"/>
+                                    <Border x:Name="BatteryBarFill" Grid.Column="0" Background="#30D158" CornerRadius="2.2"/>
+                                </Grid>
+                            </StackPanel>
+                        </Grid>
 
-                                    <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,8,0">
-                                        <TextBlock x:Name="TitleText" Text="Sin reproducción" Foreground="#F5F5F7" FontSize="14"
-                                                   FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
-                                        <TextBlock x:Name="ArtistText" Text="Spotify o navegador" Foreground="#8E8E93" FontSize="11.5"
-                                                   TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
-                                    </StackPanel>
+                        <!-- ==================== PANEL DE MÚSICA ==================== -->
+                        <Grid x:Name="MusicPanel" VerticalAlignment="Center">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
 
-                                    <!-- Controles vectoriales premium (Anterior · Play/Pausa · Siguiente) -->
-                                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                                        <!-- Anterior -->
-                                        <Button Style="{StaticResource MediaCircleBtn}" Click="Prev_Click" ToolTip="Anterior">
-                                            <Path Data="M 0,1 L 2,1 L 2,11 L 0,11 Z M 3.2,6 L 10.5,1 L 10.5,11 Z"
-                                                  Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
-                                                  Stretch="Uniform" Width="10" Height="10"/>
-                                        </Button>
+                            <!-- Fila 1: Carátula (con indicador de estado) + título/artista + barras de audio -->
+                            <Grid Grid.Row="0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
 
-                                        <!-- Play / Pausa (Botón central blanco brillante) -->
-                                        <Button x:Name="PlayBtn" Style="{StaticResource MediaPlayPrimaryBtn}" Click="Play_Click" ToolTip="Reproducir / Pausar">
-                                            <Path x:Name="PlayPauseIconPath"
-                                                  Data="M 2,0 L 11,6 L 2,12 Z"
-                                                  Fill="#07070A" Stretch="Uniform" Width="11" Height="11" Margin="1,0,0,0"/>
-                                        </Button>
-
-                                        <!-- Siguiente -->
-                                        <Button Style="{StaticResource MediaCircleBtn}" Click="Next_Click" ToolTip="Siguiente">
-                                            <Path Data="M 8.5,1 L 10.5,1 L 10.5,11 L 8.5,11 Z M 0,1 L 7.3,6 L 0,11 Z"
-                                                  Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
-                                                  Stretch="Uniform" Width="10" Height="10"/>
-                                        </Button>
-                                    </StackPanel>
+                                <Grid Width="48" Height="48">
+                                    <Border CornerRadius="11" Background="#141418"
+                                            BorderBrush="#26262E" BorderThickness="1" ClipToBounds="True">
+                                        <Grid>
+                                            <TextBlock Text="♪" Foreground="#3A3A44" FontSize="18"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            <Image x:Name="Cover" Stretch="UniformToFill"/>
+                                        </Grid>
+                                    </Border>
+                                    <!-- Punto de estado: verde = sonando, gris = en pausa -->
+                                    <Ellipse x:Name="CoverStateDot" Width="13" Height="13" Fill="#30D158"
+                                             Stroke="#050507" StrokeThickness="2.2"
+                                             HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,-4,-4"/>
                                 </Grid>
 
-                                <!-- Barra de progreso de la canción -->
-                                <Grid x:Name="ProgressTrack" Grid.Row="1" Height="4.5" Margin="0,12,0,0">
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="14,0,10,0">
+                                    <TextBlock x:Name="TitleText" Text="Sin reproducción" Foreground="#F5F5F7" FontSize="14"
+                                               FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock x:Name="ArtistText" Text="Spotify o navegador" Foreground="#8E8E93" FontSize="11.5"
+                                               TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
+                                </StackPanel>
+
+                                <!-- Barras de audio animadas (solo mientras suena y la isla está abierta) -->
+                                <StackPanel x:Name="ExpandedEq" Grid.Column="2" Orientation="Horizontal"
+                                            VerticalAlignment="Center" Height="18" Margin="0,0,2,0">
+                                    <Border x:Name="XEqBar1" Width="3" Height="6" CornerRadius="1.5" Background="#F5F5F7" Margin="1.5,0" VerticalAlignment="Center"/>
+                                    <Border x:Name="XEqBar2" Width="3" Height="14" CornerRadius="1.5" Background="#F5F5F7" Margin="1.5,0" VerticalAlignment="Center"/>
+                                    <Border x:Name="XEqBar3" Width="3" Height="9" CornerRadius="1.5" Background="#F5F5F7" Margin="1.5,0" VerticalAlignment="Center"/>
+                                    <Border x:Name="XEqBar4" Width="3" Height="13" CornerRadius="1.5" Background="#F5F5F7" Margin="1.5,0" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Grid>
+
+                            <!-- Fila 2: tiempo transcurrido · barra de progreso · duración -->
+                            <Grid x:Name="ProgressRow" Grid.Row="1" Margin="0,12,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock x:Name="ElapsedText" Text="0:00" Foreground="#8E8E93" FontSize="10"
+                                           FontWeight="SemiBold" VerticalAlignment="Center" MinWidth="26"/>
+                                <Grid x:Name="ProgressTrack" Grid.Column="1" Height="4.5" Margin="8,0">
                                     <Border Background="#24242C" CornerRadius="2.2"/>
                                     <Border x:Name="ProgressFill" Background="#F5F5F7" CornerRadius="2.2"
                                             HorizontalAlignment="Left" Width="0"/>
                                 </Grid>
+                                <TextBlock x:Name="TotalText" Grid.Column="2" Text="0:00" Foreground="#8E8E93" FontSize="10"
+                                           FontWeight="SemiBold" VerticalAlignment="Center" MinWidth="26" TextAlignment="Right"/>
                             </Grid>
+
+                            <!-- Fila 3: controles centrados (Anterior · Play/Pausa · Siguiente) -->
+                            <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,8,0,0">
+                                <Button Style="{StaticResource MediaCircleBtn}" Click="Prev_Click" ToolTip="Anterior">
+                                    <Path Data="M 0,1 L 2,1 L 2,11 L 0,11 Z M 3.2,6 L 10.5,1 L 10.5,11 Z"
+                                          Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                          Stretch="Uniform" Width="10" Height="10"/>
+                                </Button>
+                                <Button x:Name="PlayBtn" Style="{StaticResource MediaPlayPrimaryBtn}" Margin="16,0" Click="Play_Click" ToolTip="Reproducir / Pausar">
+                                    <Path x:Name="PlayPauseIconPath"
+                                          Data="M 2,0 L 11,6 L 2,12 Z"
+                                          Fill="#07070A" Stretch="Uniform" Width="11" Height="11" Margin="1,0,0,0"/>
+                                </Button>
+                                <Button Style="{StaticResource MediaCircleBtn}" Click="Next_Click" ToolTip="Siguiente">
+                                    <Path Data="M 8.5,1 L 10.5,1 L 10.5,11 L 8.5,11 Z M 0,1 L 7.3,6 L 0,11 Z"
+                                          Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                          Stretch="Uniform" Width="10" Height="10"/>
+                                </Button>
+                            </StackPanel>
                         </Grid>
 
                         <!-- ==================== PANEL DE DESCARGAS ==================== -->
@@ -354,13 +433,27 @@
                                     </StackPanel>
 
                                     <!-- Botón Pausar / Continuar descarga -->
-                                    <Button x:Name="DlPauseResumeBtn" Grid.Column="1" Style="{StaticResource MediaCircleBtn}"
-                                            Width="32" Height="32" Visibility="Collapsed"
-                                            Click="DlPauseResume_Click" ToolTip="Pausar / Continuar descarga">
-                                        <Path x:Name="DlPauseResumePath"
-                                              Data="M 1,0 L 4,0 L 4,11 L 1,11 Z M 7,0 L 10,0 L 10,11 L 7,11 Z"
-                                              Fill="#30D158" Stretch="Uniform" Width="10" Height="10"/>
-                                    </Button>
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                        <!-- Botón Cancelar descarga (se muestra junto con el de pausa; pide un segundo clic) -->
+                                        <Button x:Name="DlCancelBtn" Style="{StaticResource MediaCircleBtn}"
+                                                Width="32" Height="32" Margin="0,0,8,0"
+                                                Visibility="{Binding Visibility, ElementName=DlPauseResumeBtn}"
+                                                Click="DlCancel_Click" ToolTip="Cancelar descarga">
+                                            <Path x:Name="DlCancelPath" Data="M 0,0 L 10,10 M 10,0 L 0,10"
+                                                  Stroke="#8E8E93" StrokeThickness="1.8"
+                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                  Stretch="Uniform" Width="10" Height="10"/>
+                                        </Button>
+
+                                        <!-- Botón Pausar / Continuar descarga -->
+                                        <Button x:Name="DlPauseResumeBtn" Style="{StaticResource MediaCircleBtn}"
+                                                Width="32" Height="32" Visibility="Collapsed"
+                                                Click="DlPauseResume_Click" ToolTip="Pausar / Continuar descarga">
+                                            <Path x:Name="DlPauseResumePath"
+                                                  Data="M 1,0 L 4,0 L 4,11 L 1,11 Z M 7,0 L 10,0 L 10,11 L 7,11 Z"
+                                                  Fill="#30D158" Stretch="Uniform" Width="10" Height="10"/>
+                                        </Button>
+                                    </StackPanel>
                                 </Grid>
 
                                 <Grid x:Name="DlProgressTrack" Grid.Row="1" Height="4.5" Margin="0,10,0,0" Visibility="Collapsed">

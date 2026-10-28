@@ -15,13 +15,16 @@ namespace IslaDinamica;
 
 public partial class MainWindow : Window
 {
-    enum IslandTab { Music, Downloads }
+    enum IslandTab { Summary, Music, Downloads }
 
+    static readonly SolidColorBrush s_whiteBrush = CreateFrozenBrush(0xF5, 0xF5, 0xF7);
     static readonly SolidColorBrush s_activeTabBg = CreateFrozenBrush(0x28, 0x28, 0x2F);
     static readonly SolidColorBrush s_idleTabBg = CreateFrozenBrush(0x14, 0x14, 0x17);
     static readonly SolidColorBrush s_idleTabFg = CreateFrozenBrush(0x8E, 0x8E, 0x93);
     static readonly SolidColorBrush s_greenBrush = CreateFrozenBrush(0x30, 0xD1, 0x58);
     static readonly SolidColorBrush s_amberBrush = CreateFrozenBrush(0xFF, 0x9F, 0x0A);
+    static readonly SolidColorBrush s_redBrush = CreateFrozenBrush(0xFF, 0x45, 0x3A);
+    static readonly SolidColorBrush s_grayBrush = CreateFrozenBrush(0x8E, 0x8E, 0x93);
 
     static readonly Geometry s_playGeometry = CreateFrozenGeometry("M 2,0 L 11,6 L 2,12 Z");
     static readonly Geometry s_pauseGeometry = CreateFrozenGeometry("M 1,0 L 4,0 L 4,11 L 1,11 Z M 7,0 L 10,0 L 10,11 L 7,11 Z");
@@ -49,8 +52,12 @@ public partial class MainWindow : Window
     readonly DispatcherTimer _completedTimer = new() { Interval = TimeSpan.FromSeconds(6) };
 
     Storyboard? _eqStoryboard;
+    Storyboard? _expEqStoryboard;
+    bool _expEqRunning;
     bool _eqRunning;
     int _trimTicks;
+    int _batteryTicks;
+    (bool HasBattery, int Percent, bool Charging, bool Plugged, int RemainMin)? _lastBattery;
     System.Windows.Forms.NotifyIcon? _tray;
     System.Windows.Forms.ToolStripMenuItem? _screensTrayMenu;
 
@@ -60,6 +67,7 @@ public partial class MainWindow : Window
     string _lastTitle = "";
     string? _lastFinalPath;
     int _activeDownloads;
+    DateTime _lastDlUpdateUtc = DateTime.UtcNow;
     bool _showCompleted;
     bool _isPlaying;
     bool _expanded;
@@ -67,11 +75,16 @@ public partial class MainWindow : Window
     IslandTab _selectedTab = IslandTab.Music;
 
     // Tamaños de la isla
-    const double CompactW = 196, CompactH = 36;
-    const double ExpandedW = 398, MusicH = 132, DownloadH = 132;
+    const double CompactW = 240, CompactH = 36;
+    const double ExpandedW = 420, MusicH = 190, DownloadH = 132, SummaryH = 132;
 
     bool HasDownloadActivity => _activeDownloads > 0 || _showCompleted;
-    double ExpandedH => _selectedTab == IslandTab.Downloads ? DownloadH : MusicH;
+    double ExpandedH => _selectedTab switch
+    {
+        IslandTab.Downloads => DownloadH,
+        IslandTab.Summary => SummaryH,
+        _ => MusicH
+    };
 
     public MainWindow() => InitializeComponent();
 
@@ -93,14 +106,24 @@ public partial class MainWindow : Window
         SetupTray();
         BuildEqualizerStoryboard();
         UpdateClock();
+        UpdateBattery();
         RefreshTabVisuals(animate: false);
+
+        SystemEvents.PowerModeChanged += OnPowerModeChanged;
 
         _mainTimer.Tick += (_, _) =>
         {
             UpdateClock();
             CheckFullscreen();
+            CheckStaleDownload();
             if (_expanded && _selectedTab == IslandTab.Music && !_hiddenByFullscreen)
                 UpdateProgress();
+
+            if (++_batteryTicks >= 20) // Cada ~10 s (además de los eventos de energía)
+            {
+                _batteryTicks = 0;
+                UpdateBattery();
+            }
 
             if (++_trimTicks >= 120) // Cada ~60s en reposo compacta el Working Set
             {
@@ -143,6 +166,34 @@ public partial class MainWindow : Window
         TrimWorkingSet();
     }
 
+    // Red de seguridad: mientras hay una descarga activa el servicio informa cada ~0,5 s. Si pasan >4 s sin
+    // ningún aviso (y no se está mostrando un "completa"), la descarga ya terminó sin que llegara el aviso
+    // (típico en descargas muy rápidas): se limpia el estado para no quedarse en "0 KB / X KB (0%)".
+    void CheckStaleDownload()
+    {
+        if (_activeDownloads <= 0 || _showCompleted) return;
+        if ((DateTime.UtcNow - _lastDlUpdateUtc).TotalSeconds < 4) return;
+
+        _activeDownloads = 0;
+        SetRingProgress(0);
+        CompactDlRing.Stroke = s_greenBrush;
+        CompactDlIcon.Foreground = s_greenBrush;
+        CompactDlIcon.Text = "⬇";
+        ExpandedDlRing.Stroke = s_greenBrush;
+        DlIcon.Foreground = s_greenBrush;
+        DlIcon.Text = "⬇";
+        DlTitle.Text = "Sin descargas activas";
+        DlSub.Text = "Las descargas de navegador y Steam aparecerán aquí";
+        DlPauseResumeBtn.Visibility = Visibility.Collapsed;
+        DlProgressTrack.Visibility = Visibility.Collapsed;
+        OpenBtn.Visibility = Visibility.Collapsed;
+        RefreshCompactIndicators();
+
+        if (_selectedTab == IslandTab.Downloads)
+            SelectTab(_isPlaying ? IslandTab.Music : IslandTab.Summary, animate: _expanded);
+        if (!Island.IsMouseOver) Animate(false);
+    }
+
     static void TrimWorkingSet()
     {
         try { EmptyWorkingSet(Process.GetCurrentProcess().Handle); } catch { }
@@ -167,6 +218,24 @@ public partial class MainWindow : Window
         AddBarAnim(sb, EqBar3, 5, 14, 360, 40);
         AddBarAnim(sb, EqBar4, 11, 5, 300, 130);
         _eqStoryboard = sb;
+
+        // Barras del panel de música (más grandes), solo se animan con la isla abierta en la pestaña Música
+        var xs = new Storyboard { RepeatBehavior = RepeatBehavior.Forever };
+        AddBarAnim(xs, XEqBar1, 5, 16, 320, 0);
+        AddBarAnim(xs, XEqBar2, 15, 5, 280, 90);
+        AddBarAnim(xs, XEqBar3, 6, 17, 360, 40);
+        AddBarAnim(xs, XEqBar4, 14, 6, 300, 130);
+        _expEqStoryboard = xs;
+    }
+
+    void UpdateExpandedEq()
+    {
+        if (_expEqStoryboard == null) return;
+        bool should = _isPlaying && _expanded && _selectedTab == IslandTab.Music && !_hiddenByFullscreen;
+        if (should == _expEqRunning) return;
+        _expEqRunning = should;
+        if (should) _expEqStoryboard.Begin(this, true);
+        else _expEqStoryboard.Stop(this);
     }
 
     static void AddBarAnim(Storyboard sb, FrameworkElement bar, double from, double to, int ms, int delayMs)
@@ -221,6 +290,7 @@ public partial class MainWindow : Window
     {
         CompactDlIndicator.Visibility = HasDownloadActivity ? Visibility.Visible : Visibility.Collapsed;
         SetEqualizerRunning(_isPlaying);
+        UpdateExpandedEq();
     }
 
     // ---------- Selección de pestaña (Click en iconos o pestañas) ----------
@@ -233,14 +303,19 @@ public partial class MainWindow : Window
 
     void RefreshTabVisuals(bool animate)
     {
+        bool isSummary = _selectedTab == IslandTab.Summary;
         bool isMusic = _selectedTab == IslandTab.Music;
+        bool isDl = _selectedTab == IslandTab.Downloads;
+        SummaryPanel.Visibility = isSummary ? Visibility.Visible : Visibility.Collapsed;
         MusicPanel.Visibility = isMusic ? Visibility.Visible : Visibility.Collapsed;
-        DownloadPanel.Visibility = isMusic ? Visibility.Collapsed : Visibility.Visible;
+        DownloadPanel.Visibility = isDl ? Visibility.Visible : Visibility.Collapsed;
 
+        TabSummaryBtn.Background = isSummary ? s_activeTabBg : s_idleTabBg;
+        TabSummaryBtn.Foreground = isSummary ? Brushes.White : s_idleTabFg;
         TabMusicBtn.Background = isMusic ? s_activeTabBg : s_idleTabBg;
         TabMusicBtn.Foreground = isMusic ? Brushes.White : s_idleTabFg;
-        TabDlBtn.Background = !isMusic ? s_activeTabBg : s_idleTabBg;
-        TabDlBtn.Foreground = !isMusic ? Brushes.White : s_idleTabFg;
+        TabDlBtn.Background = isDl ? s_activeTabBg : s_idleTabBg;
+        TabDlBtn.Foreground = isDl ? Brushes.White : s_idleTabFg;
 
         if (animate)
         {
@@ -273,13 +348,100 @@ public partial class MainWindow : Window
         e.Handled = true;
         if (HasDownloadActivity && !_isPlaying)
             SelectTab(IslandTab.Downloads, animate: true);
-        else
+        else if (_isPlaying)
             SelectTab(IslandTab.Music, animate: true);
+        else
+            SelectTab(IslandTab.Summary, animate: true);
         Animate(true);
     }
 
+    void CompactBattery_Click(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true;
+        SelectTab(IslandTab.Summary, animate: true);
+        Animate(true);
+    }
+
+    void TabSummary_Click(object sender, RoutedEventArgs e) => SelectTab(IslandTab.Summary, animate: true);
     void TabMusic_Click(object sender, RoutedEventArgs e) => SelectTab(IslandTab.Music, animate: true);
     void TabDl_Click(object sender, RoutedEventArgs e) => SelectTab(IslandTab.Downloads, animate: true);
+
+    // ---------- Batería ----------
+    void OnPowerModeChanged(object? sender, PowerModeChangedEventArgs e) =>
+        Dispatcher.BeginInvoke(UpdateBattery);
+
+    void UpdateBattery()
+    {
+        var ps = System.Windows.Forms.SystemInformation.PowerStatus;
+        var status = ps.BatteryChargeStatus;
+        bool hasBattery = (status & System.Windows.Forms.BatteryChargeStatus.NoSystemBattery) == 0;
+
+        int pct = 0, remainMin = -1;
+        bool charging = false, plugged = false;
+        if (hasBattery)
+        {
+            pct = (int)Math.Round(Math.Clamp(ps.BatteryLifePercent, 0f, 1f) * 100);
+            charging = (status & System.Windows.Forms.BatteryChargeStatus.Charging) != 0;
+            plugged = ps.PowerLineStatus == System.Windows.Forms.PowerLineStatus.Online;
+            int secs = ps.BatteryLifeRemaining;
+            remainMin = secs > 0 && !plugged ? secs / 60 : -1;
+        }
+
+        var key = (hasBattery, pct, charging, plugged, remainMin);
+        if (_lastBattery == key) return; // Sin cambios: no tocar la interfaz
+        _lastBattery = key;
+
+        CompactBatteryIndicator.Visibility = hasBattery ? Visibility.Visible : Visibility.Collapsed;
+
+        if (!hasBattery)
+        {
+            BatteryRingText.Text = "--";
+            BatteryRing.StrokeDashArray = new DoubleCollection { 0, 100 };
+            BatteryTitle.Text = "Sin batería";
+            BatterySub.Text = "Este equipo funciona solo con corriente";
+            SetBatteryBar(0, s_grayBrush);
+            return;
+        }
+
+        // Color: verde cargando, rojo ≤10 %, ámbar ≤20 %, blanco normal
+        var brush = charging ? s_greenBrush
+                  : pct <= 10 ? s_redBrush
+                  : pct <= 20 ? s_amberBrush
+                  : s_whiteBrush;
+        double frac = pct / 100.0;
+
+        CompactBatteryText.Text = pct + "%";
+        CompactBatteryText.Foreground = brush;
+        CompactBatteryFill.Background = brush;
+        CompactBatteryFill.Width = Math.Max(1.5, 14 * frac);
+        CompactBatteryIndicator.ToolTip = $"Batería {pct}%" + (charging ? " · cargando" : "");
+
+        BatteryRingText.Text = pct.ToString();
+        BatteryRing.Stroke = brush == s_whiteBrush ? s_greenBrush : brush;
+        BatteryRing.StrokeDashArray = new DoubleCollection { 43.53 * frac, 100 };
+        SetBatteryBar(frac, brush == s_whiteBrush ? s_greenBrush : brush);
+
+        string state;
+        if (charging) state = "Cargando";
+        else if (plugged) state = pct >= 100 ? "Cargada" : "Conectada";
+        else state = "En batería";
+        BatteryTitle.Text = $"{pct}% · {state}";
+
+        if (plugged)
+            BatterySub.Text = charging ? "Conectada a la corriente" : (pct >= 100 ? "Batería completa" : "Conectada, sin cargar");
+        else if (remainMin >= 0)
+            BatterySub.Text = "Tiempo restante: " + (remainMin >= 60 ? $"{remainMin / 60} h {remainMin % 60} min" : $"{remainMin} min");
+        else
+            BatterySub.Text = "Tiempo restante no disponible";
+    }
+
+    void SetBatteryBar(double fraction, Brush brush)
+    {
+        fraction = Math.Clamp(fraction, 0.0, 1.0);
+        BatteryBarCol0.Width = new GridLength(fraction, GridUnitType.Star);
+        BatteryBarCol1.Width = new GridLength(1.0 - fraction, GridUnitType.Star);
+        BatteryBarFill.Background = brush;
+    }
 
     // ---------- Multi-monitor y escalado DPI ----------
     protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
@@ -484,6 +646,7 @@ public partial class MainWindow : Window
     void ExitApp()
     {
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
+        SystemEvents.PowerModeChanged -= OnPowerModeChanged;
         _downloads.Dispose();
         if (_tray != null) { _tray.Visible = false; _tray.Dispose(); _tray = null; }
         Application.Current.Shutdown();
@@ -498,6 +661,7 @@ public partial class MainWindow : Window
         PlayPauseIconPath.Data = info.IsPlaying ? s_pauseGeometry : s_playGeometry;
         PlayPauseIconPath.Margin = info.IsPlaying ? new Thickness(0) : new Thickness(1.5, 0, 0, 0);
         _isPlaying = info.IsPlaying && !string.IsNullOrEmpty(info.Title);
+        CoverStateDot.Fill = _isPlaying ? s_greenBrush : s_grayBrush;
 
         RefreshCompactIndicators();
 
@@ -513,9 +677,18 @@ public partial class MainWindow : Window
 
     void UpdateProgress()
     {
-        var (fraction, ok) = _media.GetProgress();
-        ProgressTrack.Visibility = ok ? Visibility.Visible : Visibility.Collapsed;
-        if (ok) ProgressFill.Width = ProgressTrack.ActualWidth * fraction;
+        var (pos, total, ok) = _media.GetTimes();
+        ProgressRow.Visibility = ok ? Visibility.Visible : Visibility.Collapsed;
+        if (!ok) return;
+        ProgressFill.Width = ProgressTrack.ActualWidth * (pos / total);
+        ElapsedText.Text = FormatTime(pos);
+        TotalText.Text = FormatTime(total);
+    }
+
+    static string FormatTime(double seconds)
+    {
+        var t = TimeSpan.FromSeconds(Math.Max(0, seconds));
+        return t.TotalHours >= 1 ? $"{(int)t.TotalHours}:{t.Minutes:00}:{t.Seconds:00}" : $"{t.Minutes}:{t.Seconds:00}";
     }
 
     // ---------- Descargas ----------
@@ -580,6 +753,7 @@ public partial class MainWindow : Window
                 OpenBtn.Visibility = Visibility.Collapsed;
                 _showCompleted = false;
                 _completedTimer.Stop();
+                _lastDlUpdateUtc = DateTime.UtcNow;
                 RefreshCompactIndicators();
 
                 if (wasIdle && !paused)
@@ -642,6 +816,40 @@ public partial class MainWindow : Window
 
     void DlPauseResume_Click(object s, RoutedEventArgs e) => _downloads.TogglePauseResume();
 
+    // Cancelar descarga: el primer clic arma el botón (la X se pone roja 3 s); el segundo confirma.
+    DispatcherTimer? _cancelArmTimer;
+    bool _cancelArmed;
+
+    void DlCancel_Click(object s, RoutedEventArgs e)
+    {
+        if (_cancelArmed)
+        {
+            DisarmCancel();
+            _downloads.CancelCurrent();
+            return;
+        }
+
+        _cancelArmed = true;
+        DlCancelPath.Stroke = s_redBrush;
+        DlCancelBtn.ToolTip = "Pulsa otra vez para cancelar";
+
+        _cancelArmTimer ??= new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+        _cancelArmTimer.Tick -= CancelArmTimeout;
+        _cancelArmTimer.Tick += CancelArmTimeout;
+        _cancelArmTimer.Stop();
+        _cancelArmTimer.Start();
+    }
+
+    void CancelArmTimeout(object? s, EventArgs e) => DisarmCancel();
+
+    void DisarmCancel()
+    {
+        _cancelArmed = false;
+        _cancelArmTimer?.Stop();
+        DlCancelPath.Stroke = s_grayBrush;
+        DlCancelBtn.ToolTip = "Cancelar descarga";
+    }
+
     void OpenFolder_Click(object s, RoutedEventArgs e)
     {
         if (_lastFinalPath == null) return;
@@ -671,6 +879,8 @@ public partial class MainWindow : Window
             SelectTab(IslandTab.Downloads, animate: false);
         else if (pt.X > Island.ActualWidth * 0.64 && _isPlaying)
             SelectTab(IslandTab.Music, animate: false);
+        else if (!_isPlaying && !HasDownloadActivity)
+            SelectTab(IslandTab.Summary, animate: false); // Nada activo: mostrar el resumen en vez de "Sin reproducción"
 
         Animate(true);
     }

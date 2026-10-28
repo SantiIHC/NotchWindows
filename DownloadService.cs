@@ -47,8 +47,30 @@ public class DownloadService : IDisposable
     long _lastBrowserBytes;
     long _lastNetBytes;
     long _smoothedSpeed;
-    bool _browserPaused;
+    volatile bool _browserPaused;     // pausada por nosotros (proceso de red suspendido)
+    volatile bool _browserStalled;    // sin crecimiento: pausada o detenida desde el propio navegador
+    DateTime _lastBrowserGrowthUtc = DateTime.UtcNow;
+
+    // Puente con la extensión del navegador (pausa real, nombre y total reales)
+    readonly BrowserBridge _bridge = new();
+    // Suspender el proceso de red congela TODO el internet del navegador y la descarga acaba en "conexión perdida".
+    // Por eso está desactivado: la pausa de navegador se hace con la extensión.
+    static readonly bool AllowNetworkSuspendFallback = false;
     DateTime _lastPollTime = DateTime.UtcNow;
+
+    // PID de los procesos de red del navegador que suspendimos nosotros (se reanudan siempre)
+    static readonly string[] BrowserProcessNames = { "chrome", "msedge", "brave", "opera" };
+    static readonly string SuspendedStatePath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "IslaDinamica", "suspended.txt");
+    readonly object _pauseLock = new();
+    readonly HashSet<int> _suspendedPids = new();
+
+    // Exclusión de Poll() y vigilancia de Steam (evita releer todos los .acf en reposo)
+    readonly object _pollLock = new();
+    readonly object _steamCacheLock = new();
+    readonly Dictionary<string, FileSystemWatcher> _steamWatchers = new(StringComparer.OrdinalIgnoreCase);
+    volatile bool _steamDirty = true;   // true = hay que hacer un primer escaneo
+    DateTime _lastSteamScanUtc = DateTime.MinValue;
 
     // Caché para evitar lecturas innecesarias de disco/registro en reposo
     string? _cachedSteamRoot;
@@ -57,7 +79,6 @@ public class DownloadService : IDisposable
     long _lastSteamLogLength = -1;
     HashSet<string> _cachedSuspendedApps = new(StringComparer.OrdinalIgnoreCase);
     HashSet<string> _cachedUninstalledApps = new(StringComparer.OrdinalIgnoreCase);
-    int _idleTickCounter;
 
     class SteamLiveTracker
     {
@@ -65,16 +86,24 @@ public class DownloadService : IDisposable
         public string Name = "";
         public long AcfBaselineBytes;
         public long EstimatedBytes;
+        public long ExtraSinceAcf;   // bytes extrapolados por red desde la última lectura real del .acf
         public long TotalBytes;
         public string InstallDir = "";
         public bool IsPaused;
         public DateTime? ManualOverrideUntilUtc;
+        public DateTime? MissingSinceUtc;   // desde cuándo no aparece como descarga activa en el manifiesto
     }
 
     public event Action<DownloadUpdate>? Changed;
 
     public void Start()
     {
+        RecoverOrphanedSuspension();
+
+        _bridge.Reported += Poll;
+        _bridge.Finished += OnExtFinished;
+        _bridge.Start();
+
         var folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
         if (Directory.Exists(folder))
         {
@@ -110,8 +139,67 @@ public class DownloadService : IDisposable
     /// <summary>
     /// Pausa o continúa la descarga actual (Steam o navegador).
     /// </summary>
+    /// <summary>
+    /// Cancela la descarga que se está mostrando. Navegador (con la extensión): cancelación real dentro
+    /// del navegador. Steam: abre su diálogo de desinstalar (Steam pide su propia confirmación).
+    /// </summary>
+    public void CancelCurrent()
+    {
+        var ext = _bridge.GetActive();
+        if (ext.Count > 0)
+        {
+            var primary = ext.FirstOrDefault(d => !d.Paused) ?? ext[0];   // la misma que muestra la isla
+            _bridge.Enqueue("cancel", primary.Id);
+            Log($"Cancelar (extensión): descarga {primary.Id}");
+            return;
+        }
+
+        SteamLiveTracker? steam;
+        bool hasBrowserFile;
+        lock (_lock)
+        {
+            hasBrowserFile = _active.Count > 0;
+            steam = _steamTrackers.Values.FirstOrDefault(t => !t.IsPaused) ?? _steamTrackers.Values.FirstOrDefault();
+        }
+
+        if (steam != null && !hasBrowserFile && steam.AppId.All(char.IsDigit))
+        {
+            try { Process.Start(new ProcessStartInfo($"steam://uninstall/{steam.AppId}") { UseShellExecute = true }); }
+            catch { }
+            return;
+        }
+
+        Log("Cancelar descarga de navegador sin extensión: no disponible (instala IslaExtension en Chrome/Edge).");
+    }
+
+    /// <summary>La extensión avisa de que una descarga terminó o se interrumpió (cancelada o fallida).</summary>
+    void OnExtFinished(ExtFinished f)
+    {
+        if (f.State == "complete")
+        {
+            if (!string.IsNullOrEmpty(f.Path)) NotifyCompleted(f.Path);   // se desduplica con el aviso del vigilante
+            return;
+        }
+
+        int left;
+        lock (_lock) left = _steamTrackers.Count;
+        left += _bridge.GetActive().Count(d => d.Id != f.Id);
+
+        Changed?.Invoke(new DownloadUpdate(DownloadStatus.Cancelled, f.Name, 0, left, null));
+    }
+
     public void TogglePauseResume()
     {
+        // Navegador con la extensión conectada: pausa/reanuda de verdad dentro de Chrome/Edge
+        var extDownloads = _bridge.GetActive();
+        if (extDownloads.Count > 0)
+        {
+            bool anyRunning = extDownloads.Any(d => !d.Paused);
+            foreach (var d in extDownloads)
+                _bridge.Enqueue(anyRunning ? "pause" : "resume", d.Id);
+            return;
+        }
+
         SteamLiveTracker? steamTarget = null;
         bool hasBrowser = false;
 
@@ -161,63 +249,185 @@ public class DownloadService : IDisposable
 
         if (hasBrowser)
         {
-            _browserPaused = !_browserPaused;
-            ToggleBrowserDownloadViaProcesses(_browserPaused);
+            // Si el usuario pausó la descarga en el propio Chrome/Edge, desde aquí no se puede reanudar
+            if (_browserStalled && !_browserPaused) return;
+
+            if (!AllowNetworkSuspendFallback)
+            {
+                Log("Pausa de navegador sin extensión: no disponible (instala IslaExtension en Chrome/Edge).");
+                return;
+            }
+
+            SetBrowserPaused(!_browserPaused);
             Poll();
         }
     }
 
-    /// <summary>
-    /// Para descargas de navegador, busca si hay una ventana de navegador activa y envía el atajo
-    /// o suspende/reanuda los sockets de transferencia sin congelar la interfaz.
-    /// </summary>
-    void ToggleBrowserDownloadViaProcesses(bool pause)
+    const uint PROCESS_SUSPEND_RESUME = 0x0800;
+    const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern IntPtr OpenProcess(uint desiredAccess, bool inheritHandle, int processId);
+
+    [DllImport("kernel32.dll")]
+    static extern bool CloseHandle(IntPtr handle);
+
+    /// <summary>Registro de diagnóstico en %LocalAppData%\IslaDinamica\debug.log (solo al pausar/reanudar).</summary>
+    internal static void Log(string msg)
     {
         try
         {
-            foreach (var procName in new[] { "chrome", "msedge", "brave", "opera" })
-            {
-                foreach (var p in Process.GetProcessesByName(procName))
-                {
-                    try
-                    {
-                        // Solo el subproceso de red tiene pocos hilos (~10-18) y sin ventana principal
-                        if (p.MainWindowHandle != IntPtr.Zero) continue;
-                        if (IsChromiumNetworkUtilityProcess(p.Handle))
-                        {
-                            if (pause) NtSuspendProcess(p.Handle);
-                            else NtResumeProcess(p.Handle);
-                        }
-                    }
-                    catch { }
-                    finally { p.Dispose(); }
-                }
-            }
+            var dir = Path.GetDirectoryName(SuspendedStatePath)!;
+            Directory.CreateDirectory(dir);
+            var f = Path.Combine(dir, "debug.log");
+            if (File.Exists(f) && new FileInfo(f).Length > 100_000) File.Delete(f);
+            File.AppendAllText(f, $"{DateTime.Now:HH:mm:ss}  {msg}\n");
         }
         catch { }
     }
 
-    static bool IsChromiumNetworkUtilityProcess(IntPtr processHandle)
+    /// <summary>
+    /// Pausa o reanuda el proceso de red de los navegadores Chromium. Guarda los PID que suspendió
+    /// para reanudar exactamente esos (NtSuspendProcess es un contador) y poder recuperarse si la isla
+    /// se cierra a la fuerza. Abre cada proceso solo con los permisos mínimos (suspender + consultar),
+    /// porque pedir acceso total puede ser denegado en procesos con sandbox.
+    /// Si no encuentra ningún proceso que suspender (p. ej. Firefox), no se marca como pausado.
+    /// </summary>
+    void SetBrowserPaused(bool pause)
+    {
+        lock (_pauseLock)
+        {
+            if (pause)
+            {
+                int total = 0, noAccess = 0, noCmd = 0, network = 0, suspended = 0;
+                foreach (var procName in BrowserProcessNames)
+                {
+                    Process[] procs;
+                    try { procs = Process.GetProcessesByName(procName); }
+                    catch { continue; }
+
+                    foreach (var p in procs)
+                    {
+                        int pid = p.Id;
+                        bool hasWindow = false;
+                        try { hasWindow = p.MainWindowHandle != IntPtr.Zero; } catch { }
+                        p.Dispose();
+
+                        total++;
+                        if (hasWindow || _suspendedPids.Contains(pid)) continue;
+
+                        IntPtr h = OpenProcess(PROCESS_SUSPEND_RESUME | PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+                        if (h == IntPtr.Zero) { noAccess++; continue; }
+                        try
+                        {
+                            var cmd = GetProcessCommandLine(h);
+                            if (cmd == null) { noCmd++; continue; }
+                            if (!cmd.Contains("NetworkService", StringComparison.OrdinalIgnoreCase)) continue;
+
+                            network++;
+                            int st = NtSuspendProcess(h);
+                            if (st == 0) { _suspendedPids.Add(pid); suspended++; }
+                            else Log($"NtSuspendProcess({pid}) devolvió 0x{st:X8}");
+                        }
+                        finally { CloseHandle(h); }
+                    }
+                }
+                _browserPaused = _suspendedPids.Count > 0;
+                Log($"Pausar navegador: procesos={total}, sin acceso={noAccess}, sin línea de comandos={noCmd}, " +
+                    $"proceso de red encontrado={network}, suspendidos={suspended}");
+            }
+            else
+            {
+                foreach (var pid in _suspendedPids.ToArray())
+                {
+                    IntPtr h = OpenProcess(PROCESS_SUSPEND_RESUME, false, pid);
+                    if (h == IntPtr.Zero) continue;
+                    try { NtResumeProcess(h); }
+                    finally { CloseHandle(h); }
+                }
+                if (_suspendedPids.Count > 0) Log($"Reanudado: {_suspendedPids.Count} proceso(s)");
+                _suspendedPids.Clear();
+                _browserPaused = false;
+                _lastBrowserGrowthUtc = DateTime.UtcNow;   // evita marcar "detenida" justo al reanudar
+            }
+            PersistSuspendedPids();
+        }
+    }
+
+    bool AnySuspendedProcessAlive()
+    {
+        lock (_pauseLock)
+        {
+            foreach (var pid in _suspendedPids)
+            {
+                try { using var p = Process.GetProcessById(pid); if (!p.HasExited) return true; }
+                catch { }
+            }
+            return false;
+        }
+    }
+
+    void PersistSuspendedPids()
+    {
+        try
+        {
+            if (_suspendedPids.Count == 0)
+            {
+                if (File.Exists(SuspendedStatePath)) File.Delete(SuspendedStatePath);
+                return;
+            }
+            Directory.CreateDirectory(Path.GetDirectoryName(SuspendedStatePath)!);
+            File.WriteAllLines(SuspendedStatePath, _suspendedPids.Select(i => i.ToString()));
+        }
+        catch { }
+    }
+
+    /// <summary>Si la isla se cerró a la fuerza con el navegador en pausa, lo reanuda al arrancar.</summary>
+    void RecoverOrphanedSuspension()
+    {
+        try
+        {
+            if (!File.Exists(SuspendedStatePath)) return;
+            foreach (var line in File.ReadAllLines(SuspendedStatePath))
+            {
+                if (!int.TryParse(line, out int pid)) continue;
+                IntPtr h = OpenProcess(PROCESS_SUSPEND_RESUME | PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+                if (h == IntPtr.Zero) continue;
+                try
+                {
+                    if (IsChromiumNetworkUtilityProcess(h))   // evita tocar un PID reutilizado
+                    {
+                        NtResumeProcess(h);
+                        Log($"Recuperado al arrancar: proceso {pid} reanudado");
+                    }
+                }
+                finally { CloseHandle(h); }
+            }
+            File.Delete(SuspendedStatePath);
+        }
+        catch { }
+    }
+
+    static bool IsChromiumNetworkUtilityProcess(IntPtr processHandle) =>
+        GetProcessCommandLine(processHandle)?.Contains("NetworkService", StringComparison.OrdinalIgnoreCase) == true;
+
+    /// <summary>Línea de comandos del proceso (ProcessCommandLineInformation = 60), o null si no se puede leer.</summary>
+    static string? GetProcessCommandLine(IntPtr processHandle)
     {
         IntPtr buf = IntPtr.Zero;
         try
         {
-            int status = NtQueryInformationProcess(processHandle, 60, IntPtr.Zero, 0, out int size);
-            if (size <= 0 || size > 32768) return false;
+            NtQueryInformationProcess(processHandle, 60, IntPtr.Zero, 0, out int size);
+            if (size <= 0 || size > 65536) return null;
             buf = Marshal.AllocHGlobal(size);
-            if (NtQueryInformationProcess(processHandle, 60, buf, size, out _) != 0)
-                return false;
+            if (NtQueryInformationProcess(processHandle, 60, buf, size, out _) != 0) return null;
 
             var us = Marshal.PtrToStructure<UNICODE_STRING>(buf);
-            if (us.Buffer == IntPtr.Zero || us.Length == 0) return false;
-            string cmd = Marshal.PtrToStringUni(us.Buffer, us.Length / 2) ?? "";
-            return cmd.Contains("network.mojom.NetworkService", StringComparison.OrdinalIgnoreCase);
+            if (us.Buffer == IntPtr.Zero || us.Length == 0) return null;
+            return Marshal.PtrToStringUni(us.Buffer, us.Length / 2);
         }
-        catch { return false; }
-        finally
-        {
-            if (buf != IntPtr.Zero) Marshal.FreeHGlobal(buf);
-        }
+        catch { return null; }
+        finally { if (buf != IntPtr.Zero) Marshal.FreeHGlobal(buf); }
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -310,7 +520,6 @@ public class DownloadService : IDisposable
         {
             _active[path] = 0;
             _lastName = CleanName(path);
-            _browserPaused = false;
         }
         Poll();
     }
@@ -391,22 +600,42 @@ public class DownloadService : IDisposable
         });
     }
 
+    /// <summary>
+    /// Se llama desde el temporizador, el vigilante de archivos y la interfaz. Si ya hay un Poll en curso
+    /// se omite (el siguiente tick de 500 ms lo cubre). No se usa lock bloqueante porque PollCore invoca
+    /// Changed -> Dispatcher.Invoke y podría haber un interbloqueo con el hilo de la interfaz.
+    /// </summary>
     void Poll()
+    {
+        if (!Monitor.TryEnter(_pollLock)) return;
+        try { PollCore(); }
+        finally { Monitor.Exit(_pollLock); }
+    }
+
+    void PollCore()
     {
         bool hasActive;
         lock (_lock)
         {
-            hasActive = _active.Count > 0 || _steamTrackers.Count > 0;
+            hasActive = _active.Count > 0 || _steamTrackers.Count > 0 || _bridge.GetActive().Count > 0;
         }
 
         if (!hasActive)
         {
-            _idleTickCounter++;
-            if (_idleTickCounter % 4 != 0) return;
-        }
-        else
-        {
-            _idleTickCounter = 0;
+            // Reposo real: sin leer la red y sin releer los .acf salvo que Steam haya tocado alguno
+            // (o cada 30 s como respaldo, por si aparece una biblioteca nueva).
+            if (_browserPaused) SetBrowserPaused(false);   // nunca dejar el navegador congelado
+
+            var t = DateTime.UtcNow;
+            _lastNetBytes = 0;          // se vuelve a medir al empezar una descarga
+            _lastPollTime = t;
+            _smoothedSpeed = 0;
+
+            if (!_steamDirty && (t - _lastSteamScanUtc).TotalSeconds < 30) return;
+            _steamDirty = false;
+            _lastSteamScanUtc = t;
+            PollSteam(0);
+            return;
         }
 
         var now = DateTime.UtcNow;
@@ -420,6 +649,29 @@ public class DownloadService : IDisposable
         _lastNetBytes = currentNetBytes;
 
         PollSteam(netDelta);
+
+        // Con la extensión conectada el navegador informa de verdad: nombre, total, porcentaje y pausa real
+        var ext = _bridge.GetActive();
+        if (ext.Count > 0)
+        {
+            var primary = ext.FirstOrDefault(d => !d.Paused) ?? ext[0];
+            int steamCount;
+            lock (_lock) steamCount = _steamTrackers.Count;
+
+            _lastBrowserBytes = 0;
+            _browserStalled = false;
+            _smoothedSpeed = primary.Paused ? 0 : primary.SpeedBytesPerSec;
+
+            Changed?.Invoke(new DownloadUpdate(
+                primary.Paused ? DownloadStatus.Paused : DownloadStatus.Active,
+                string.IsNullOrEmpty(primary.Name) ? "Descargando archivo" : primary.Name,
+                primary.Bytes,
+                ext.Count + steamCount,
+                null,
+                TotalBytes: primary.Total,
+                SpeedBytesPerSec: _smoothedSpeed));
+            return;
+        }
 
         string[] keys;
         string name;
@@ -440,6 +692,9 @@ public class DownloadService : IDisposable
 
         if (keys.Length > 0)
         {
+            // Si el proceso de red que suspendimos ya no existe (el navegador se reinició), limpiar el estado
+            if (_browserPaused && !AnySuspendedProcessAlive()) SetBrowserPaused(false);
+
             long total = 0;
             int validKeys = 0;
             foreach (var k in keys)
@@ -456,14 +711,32 @@ public class DownloadService : IDisposable
             if (validKeys > 0)
             {
                 long fileDelta = _lastBrowserBytes > 0 && total >= _lastBrowserBytes ? total - _lastBrowserBytes : 0;
-                if (fileDelta > 0) _browserPaused = false;
-                long effectiveDelta = _browserPaused ? 0 : (fileDelta > 0 ? fileDelta : netDelta);
-                long instantSpeed = (long)(effectiveDelta / elapsedSec);
-                _smoothedSpeed = _browserPaused ? 0 : (_smoothedSpeed == 0 ? instantSpeed : (long)(_smoothedSpeed * 0.55 + instantSpeed * 0.45));
+
+                // Lo único fiable para un navegador es el crecimiento del archivo (la red incluye todo lo demás).
+                // Al pausar, Chrome aún vuelca a disco lo que tenía en búfer: eso NO significa que se reanudó.
+                if (_lastBrowserBytes == 0 || fileDelta > 0) _lastBrowserGrowthUtc = now;
+
+                bool stalled = !_browserPaused && (now - _lastBrowserGrowthUtc).TotalSeconds >= 4;
+                _browserStalled = stalled;
+                bool shownPaused = _browserPaused || stalled;
+
+                if (shownPaused)
+                {
+                    _smoothedSpeed = 0;
+                }
+                else if (fileDelta > 0)
+                {
+                    long instantSpeed = (long)(fileDelta / elapsedSec);
+                    _smoothedSpeed = _smoothedSpeed == 0 ? instantSpeed : (long)(_smoothedSpeed * 0.55 + instantSpeed * 0.45);
+                }
+                else
+                {
+                    _smoothedSpeed = (long)(_smoothedSpeed * 0.8);   // el navegador escribe a ráfagas: decae suave
+                }
                 _lastBrowserBytes = total;
 
                 Changed?.Invoke(new DownloadUpdate(
-                    _browserPaused ? DownloadStatus.Paused : DownloadStatus.Active,
+                    shownPaused ? DownloadStatus.Paused : DownloadStatus.Active,
                     name,
                     total,
                     validKeys + steamTotalCount,
@@ -475,6 +748,14 @@ public class DownloadService : IDisposable
         }
 
         _lastBrowserBytes = 0;
+        _browserStalled = false;
+
+        if (_browserPaused)
+        {
+            bool anyBrowserDownload;
+            lock (_lock) anyBrowserDownload = _active.Count > 0;
+            if (!anyBrowserDownload) SetBrowserPaused(false);
+        }
 
         if (currentSteam != null)
         {
@@ -524,6 +805,8 @@ public class DownloadService : IDisposable
             if (_cachedSteamRoot == null || _cachedSteamDirs == null || _cachedSteamDirs.Count == 0) return;
 
             var seenIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var uninstalledNow = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var completedNow = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             List<SteamLiveTracker>? completedList = null;
             List<SteamLiveTracker>? cancelledList = null;
 
@@ -549,14 +832,20 @@ public class DownloadService : IDisposable
 
                     // Bit 1024 = StateUpdateRunning, Bit 2 = StateUpdateRequired con descarga iniciada
                     bool hasActiveDownload = ((flags & 1024) != 0 || (flags & 512) != 0) && toDownload > 0;
-                    if (!hasActiveDownload) continue;
+                    if (!hasActiveDownload)
+                    {
+                        // StateFlags = 4 -> totalmente instalado: la descarga que seguíamos terminó
+                        string doneId = ExtractVdfValue(content, "appid");
+                        if (flags == 4 && doneId.Length > 0) completedNow.Add(doneId);
+                        continue;
+                    }
 
                     string appId = ExtractVdfValue(content, "appid");
                     string gameName = ExtractVdfValue(content, "name");
                     if (string.IsNullOrEmpty(appId) || string.IsNullOrEmpty(gameName) || appId == "228980") continue;
 
                     var (pausedInLog, uninstalledInLog) = GetAppStatesFromSteamLog(_cachedSteamRoot);
-                    if (uninstalledInLog.Contains(appId)) continue;
+                    if (uninstalledInLog.Contains(appId)) { uninstalledNow.Add(appId); continue; }
 
                     long.TryParse(ExtractVdfValue(content, "BytesDownloaded"), out long downloaded);
 
@@ -596,15 +885,18 @@ public class DownloadService : IDisposable
 
                             if (downloaded != tracker.AcfBaselineBytes)
                             {
+                                // Steam escribió un valor real: es la verdad; se descarta lo extrapolado
+                                // (antes el error de la red —cabeceras, otras apps— se acumulaba sin corregirse)
                                 tracker.AcfBaselineBytes = downloaded;
-                                if (downloaded > tracker.EstimatedBytes)
-                                    tracker.EstimatedBytes = downloaded;
+                                tracker.ExtraSinceAcf = 0;
+                                tracker.EstimatedBytes = downloaded;
                             }
                         }
 
                         if (!tracker.IsPaused && netDeltaBytes > 0)
                         {
-                            tracker.EstimatedBytes = Math.Min(tracker.TotalBytes, tracker.EstimatedBytes + netDeltaBytes);
+                            tracker.ExtraSinceAcf += netDeltaBytes;
+                            tracker.EstimatedBytes = Math.Min(tracker.TotalBytes, tracker.AcfBaselineBytes + tracker.ExtraSinceAcf);
                         }
                     }
                 }
@@ -617,11 +909,23 @@ public class DownloadService : IDisposable
                     List<string>? toRemove = null;
                     foreach (var k in _steamTrackers.Keys)
                     {
-                        if (!seenIds.Contains(k))
+                        var tr = _steamTrackers[k];
+                        if (seenIds.Contains(k)) { tr.MissingSinceUtc = null; continue; }
+
+                        bool looksComplete = !tr.IsPaused && tr.TotalBytes > 0 && tr.EstimatedBytes >= tr.TotalBytes * 0.95;
+                        bool immediate = uninstalledNow.Contains(k) || completedNow.Contains(k) || looksComplete;
+                        if (!immediate)
                         {
-                            toRemove ??= new();
-                            toRemove.Add(k);
+                            // Al pausar/reanudar, Steam reescribe el manifiesto y por un momento no parece "descargando".
+                            // No se da por cancelada hasta que lleve ~10 s sin aparecer (y no haya una pausa/reanudación en curso).
+                            var nowUtc = DateTime.UtcNow;
+                            tr.MissingSinceUtc ??= nowUtc;
+                            bool overrideActive = tr.ManualOverrideUntilUtc != null && nowUtc <= tr.ManualOverrideUntilUtc;
+                            if (overrideActive || (nowUtc - tr.MissingSinceUtc.Value).TotalSeconds < 10) continue;
                         }
+
+                        toRemove ??= new();
+                        toRemove.Add(k);
                     }
 
                     if (toRemove != null)
@@ -630,7 +934,7 @@ public class DownloadService : IDisposable
                         {
                             var done = _steamTrackers[appId];
                             _steamTrackers.Remove(appId);
-                            if (!done.IsPaused && done.TotalBytes > 0 && done.EstimatedBytes >= done.TotalBytes * 0.95)
+                            if (completedNow.Contains(appId) || (!done.IsPaused && done.TotalBytes > 0 && done.EstimatedBytes >= done.TotalBytes * 0.95))
                             {
                                 completedList ??= new();
                                 completedList.Add(done);
@@ -739,6 +1043,11 @@ public class DownloadService : IDisposable
 
     void EnsureSteamDirectoriesCached()
     {
+        lock (_steamCacheLock) EnsureSteamDirectoriesCachedCore();
+    }
+
+    void EnsureSteamDirectoriesCachedCore()
+    {
         var now = DateTime.UtcNow;
         if (_cachedSteamDirs != null && (now - _lastSteamDirCacheUtc).TotalSeconds < 60)
             return;
@@ -770,6 +1079,30 @@ public class DownloadService : IDisposable
         }
 
         _cachedSteamDirs = result;
+        SyncSteamWatchers(result);
+    }
+
+    /// <summary>Un vigilante por biblioteca: marca _steamDirty cuando Steam crea/modifica/borra un appmanifest.</summary>
+    void SyncSteamWatchers(List<string> dirs)
+    {
+        foreach (var d in dirs)
+        {
+            if (_steamWatchers.ContainsKey(d)) continue;
+            try
+            {
+                var w = new FileSystemWatcher(d, "appmanifest_*.acf")
+                {
+                    NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size
+                };
+                w.Changed += (_, _) => _steamDirty = true;
+                w.Created += (_, _) => _steamDirty = true;
+                w.Deleted += (_, _) => _steamDirty = true;
+                w.Renamed += (_, _) => _steamDirty = true;
+                w.EnableRaisingEvents = true;
+                _steamWatchers[d] = w;
+            }
+            catch { }
+        }
     }
 
     static string? GetSteamRootPath()
@@ -816,8 +1149,11 @@ public class DownloadService : IDisposable
 
     public void Dispose()
     {
-        if (_browserPaused) ToggleBrowserDownloadViaProcesses(false);
         _timer?.Dispose();
+        _bridge.Dispose();
+        SetBrowserPaused(false);   // siempre deja el navegador reanudado
         _watcher?.Dispose();
+        foreach (var w in _steamWatchers.Values) w.Dispose();
+        _steamWatchers.Clear();
     }
 }
