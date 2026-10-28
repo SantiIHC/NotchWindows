@@ -1,7 +1,7 @@
 <Window x:Class="IslaDinamica.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="IslaDinamica" Width="440" Height="175"
+        Title="IslaDinamica" Width="480" Height="235"
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
         Topmost="True" ShowInTaskbar="False" ResizeMode="NoResize"
         WindowStartupLocation="Manual" Loaded="Window_Loaded">
@@ -117,19 +117,47 @@
             <Setter Property="Background" Value="#161618"/>
             <Setter Property="FontSize" Value="11"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="Margin" Value="4,0"/>
+            <Setter Property="Margin" Value="2.5,0"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
                         <Border x:Name="PillBorder" Background="{TemplateBinding Background}"
                                 BorderBrush="#26262A" BorderThickness="1"
-                                CornerRadius="10" Padding="10,3">
+                                CornerRadius="10" Padding="8,3">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="PillBorder" Property="BorderBrush" Value="#45454C"/>
                                 <Setter Property="Foreground" Value="White"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Tarjeta compacta para los juegos recientes (Top 2–4) -->
+        <Style x:Key="GameRecentCardBtn" TargetType="Button">
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Background" Value="#121217"/>
+            <Setter Property="BorderBrush" Value="#24242E"/>
+            <Setter Property="Foreground" Value="#E5E5EA"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="CardBorder" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1"
+                                CornerRadius="9" Padding="6,5">
+                            <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="CardBorder" Property="Background" Value="#1E1E28"/>
+                                <Setter TargetName="CardBorder" Property="BorderBrush" Value="#4B4B60"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="CardBorder" Property="Background" Value="#282836"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -143,6 +171,9 @@
                 BorderThickness="1,0,1,1"
                 Width="240" Height="36" HorizontalAlignment="Center" VerticalAlignment="Top"
                 ClipToBounds="True" MouseEnter="Island_MouseEnter" MouseLeave="Island_MouseLeave">
+            <Border.LayoutTransform>
+                <ScaleTransform x:Name="IslandScale" ScaleX="1" ScaleY="1"/>
+            </Border.LayoutTransform>
             <Border.BorderBrush>
                 <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
                     <GradientStop Color="#1F1F24" Offset="0"/>
@@ -254,6 +285,12 @@
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="● " Foreground="#30D158" FontSize="9" VerticalAlignment="Center"/>
                                     <TextBlock Text="Descargas"/>
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="TabGamesBtn" Style="{StaticResource TabPillBtn}" Click="TabGames_Click">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="◆ " Foreground="#A78BFA" FontSize="9.5" VerticalAlignment="Center"/>
+                                    <TextBlock Text="Juegos"/>
                                 </StackPanel>
                             </Button>
                         </StackPanel>
@@ -466,6 +503,130 @@
                                         Content="Abrir ubicación ↗" FontSize="11.5" Margin="0,8,0,0"
                                         HorizontalAlignment="Left" Foreground="#30D158"
                                         Visibility="Collapsed" Click="OpenFolder_Click"/>
+                            </Grid>
+                        </Grid>
+
+                        <!-- ==================== PANEL DE JUEGOS (FASE 7) ==================== -->
+                        <Grid x:Name="GamesPanel" Visibility="Collapsed" VerticalAlignment="Center">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <!-- Fila 1: Último juego destacado -->
+                            <Border Grid.Row="0" Background="#101016" BorderBrush="#23232E" BorderThickness="1"
+                                    CornerRadius="12" Padding="9,8">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="96"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <!-- Carátula panorámica de Steam -->
+                                    <Border CornerRadius="8" Width="96" Height="50" Background="#181822"
+                                            BorderBrush="#2C2C3A" BorderThickness="1" ClipToBounds="True">
+                                        <Grid>
+                                            <TextBlock Text="◆" Foreground="#3E3E52" FontSize="20"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            <Image x:Name="FeaturedGameCover" Stretch="UniformToFill"/>
+                                        </Grid>
+                                    </Border>
+
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="12,0,10,0">
+                                        <TextBlock x:Name="FeaturedGameBadge" Text="ÚLTIMO JUGADO" Foreground="#A78BFA"
+                                                   FontSize="9" FontWeight="Bold"/>
+                                        <TextBlock x:Name="FeaturedGameTitle" Text="Buscando juegos en Steam…"
+                                                   Foreground="#F5F5F7" FontSize="13.5" FontWeight="SemiBold"
+                                                   TextTrimming="CharacterEllipsis" Margin="0,1,0,0"/>
+                                        <TextBlock x:Name="FeaturedGameSub" Text="Tus últimos juegos aparecerán aquí"
+                                                   Foreground="#8E8E93" FontSize="11"
+                                                   TextTrimming="CharacterEllipsis" Margin="0,1,0,0"/>
+                                        <!-- Si se está actualizando en Steam, muestra el progreso aquí mismo -->
+                                        <Grid x:Name="FeaturedGameDlTrack" Height="4" Margin="0,5,0,0" Visibility="Collapsed">
+                                            <Border Background="#1C3824" CornerRadius="2"/>
+                                            <Border x:Name="FeaturedGameDlFill" Background="#30D158" CornerRadius="2"
+                                                    HorizontalAlignment="Left" Width="0"/>
+                                        </Grid>
+                                    </StackPanel>
+
+                                    <!-- Botón grande Ejecutar / Ver actualización -->
+                                    <Button x:Name="FeaturedPlayBtn" Grid.Column="2" Style="{StaticResource TabPillBtn}"
+                                            Background="#A78BFA" Foreground="#07070A" FontWeight="Bold" FontSize="11.5"
+                                            VerticalAlignment="Center" Margin="0" Visibility="Collapsed"
+                                            Click="FeaturedGamePlay_Click" ToolTip="Ejecutar en Steam">
+                                        <TextBlock x:Name="FeaturedPlayBtnText" Text="Jugar ▶" Margin="4,2"/>
+                                    </Button>
+                                </Grid>
+                            </Border>
+
+                            <!-- Fila 2: Lista compacta de recientes (siguientes 3 juegos) -->
+                            <Grid x:Name="RecentGamesRow" Grid.Row="1" Margin="0,8,0,0" Visibility="Collapsed">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+
+                                <!-- Reciente #2 -->
+                                <Button x:Name="RecentGameBtn1" Grid.Column="0" Style="{StaticResource GameRecentCardBtn}"
+                                        Margin="0,0,4,0" Visibility="Collapsed" Click="RecentGame1_Click">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="26"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Border Width="26" Height="26" CornerRadius="6" Background="#1B1B24" ClipToBounds="True">
+                                            <Image x:Name="RecentGameImg1" Stretch="UniformToFill"/>
+                                        </Border>
+                                        <TextBlock x:Name="RecentGameName1" Grid.Column="1" Text="" Foreground="#E5E5EA"
+                                                   FontSize="10.5" FontWeight="SemiBold" VerticalAlignment="Center"
+                                                   Margin="7,0,4,0" TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock Grid.Column="2" Text="▶" Foreground="#A78BFA" FontSize="9"
+                                                   VerticalAlignment="Center"/>
+                                    </Grid>
+                                </Button>
+
+                                <!-- Reciente #3 -->
+                                <Button x:Name="RecentGameBtn2" Grid.Column="1" Style="{StaticResource GameRecentCardBtn}"
+                                        Margin="2,0,2,0" Visibility="Collapsed" Click="RecentGame2_Click">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="26"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Border Width="26" Height="26" CornerRadius="6" Background="#1B1B24" ClipToBounds="True">
+                                            <Image x:Name="RecentGameImg2" Stretch="UniformToFill"/>
+                                        </Border>
+                                        <TextBlock x:Name="RecentGameName2" Grid.Column="1" Text="" Foreground="#E5E5EA"
+                                                   FontSize="10.5" FontWeight="SemiBold" VerticalAlignment="Center"
+                                                   Margin="7,0,4,0" TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock Grid.Column="2" Text="▶" Foreground="#A78BFA" FontSize="9"
+                                                   VerticalAlignment="Center"/>
+                                    </Grid>
+                                </Button>
+
+                                <!-- Reciente #4 -->
+                                <Button x:Name="RecentGameBtn3" Grid.Column="2" Style="{StaticResource GameRecentCardBtn}"
+                                        Margin="4,0,0,0" Visibility="Collapsed" Click="RecentGame3_Click">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="26"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Border Width="26" Height="26" CornerRadius="6" Background="#1B1B24" ClipToBounds="True">
+                                            <Image x:Name="RecentGameImg3" Stretch="UniformToFill"/>
+                                        </Border>
+                                        <TextBlock x:Name="RecentGameName3" Grid.Column="1" Text="" Foreground="#E5E5EA"
+                                                   FontSize="10.5" FontWeight="SemiBold" VerticalAlignment="Center"
+                                                   Margin="7,0,4,0" TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock Grid.Column="2" Text="▶" Foreground="#A78BFA" FontSize="9"
+                                                   VerticalAlignment="Center"/>
+                                    </Grid>
+                                </Button>
                             </Grid>
                         </Grid>
                     </Grid>

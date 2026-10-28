@@ -57,6 +57,7 @@ Ejecutar `publish\IslaDinamica.exe` y, desde el icono de bandeja, marcar "Inicia
 | `BrowserBridge.cs` | Servidor local (`127.0.0.1:47831`) con el que habla la extensión para estado de descargas. | 
 | `StartupManager.cs` | Inicio con Windows (`HKCU\...\Run`) | 
 | `MediaService.cs` | Música vía SMTC, con caché, portada a 136 px y posición/duración de la canción | 
+| `GameLauncherService.cs` | Detección automática de juegos instalados en Steam (`appmanifest_*.acf`) cruzada con `LastPlayed` en `localconfig.vdf`, más carga/caché de carátulas desde `appcache\librarycache` o CDN | 
 
 ## Estado por fases
 
@@ -116,21 +117,19 @@ Ejecutar `publish\IslaDinamica.exe` y, desde el icono de bandeja, marcar "Inicia
 
 * \[x\] **Arreglo de descargas rápidas:** ignorar IDs ya terminados.
 
-### Fase 7 — Lanzador rápido de juegos (NUEVA - EN PLANIFICACIÓN)
+### Fase 7 — Lanzador rápido de juegos (IMPLEMENTADA Y PUBLICADA)
 
 **Objetivo:** Una nueva sección dentro del notch para acceder rápidamente a los últimos juegos sin abrir launchers completos, mediante detección 100% automática.
 
-* \[ \] **Detección automática de recientes:** Escanear en segundo plano para identificar los últimos juegos ejecutados. 
-    * *Steam:* Leer el archivo `localconfig.vdf` (atributo `LastPlayed`) para obtener el historial exacto de la cuenta.
-    * *General:* Revisar los accesos directos recientes (`.lnk`) de Windows o monitorizar procesos de juegos conocidos.
-* \[ \] **Nueva pestaña "Juegos":** Integrada en la interfaz expandida junto a Resumen, Música y Descargas.
-* \[ \] **Último juego destacado:** Mostrar la carátula en alta calidad (obtenida de la caché de Steam o internet), título y un botón grande de "Ejecutar".
-* \[ \] **Lista de recientes (Top 3-4):** Una lista compacta debajo del destacado con los juegos jugados anteriormente.
-* \[ \] **Integración de estado (Opcional):** Si el juego detectado se está actualizando actualmente en Steam, mostrar el progreso de descarga directamente sobre su carátula en lugar del botón de jugar.
+* \[x\] **Detección automática de recientes (`GameLauncherService.cs`):** Escanea en segundo plano todas las bibliotecas de Steam (`libraryfolders.vdf` + `appmanifest_*.acf`) y cruza cada AppID con `userdata\*\config\localconfig.vdf` (atributo `LastPlayed` con lector de bloques balanceados `{...}`).
+* \[x\] **Nueva pestaña "Juegos":** Integrada en la interfaz expandida junto a Resumen, Música y Descargas.
+* \[x\] **Último juego destacado:** Muestra la carátula panorámica (obtenida de `appcache\librarycache` de Steam o descargada en caché local `%LocalAppData%\IslaDinamica\covers`), título, hace cuánto se jugó y botón **"Jugar ▶"** (`steam://rungameid/<AppId>`).
+* \[x\] **Lista de recientes (Top 3 siguientes):** Fila inferior de 3 tarjetas compactas con miniatura, nombre y lanzamiento en un clic.
+* \[x\] **Integración de estado con descargas de Steam:** Si el juego destacado se está actualizando en Steam, muestra la barra de progreso y el porcentaje en su propia tarjeta y cambia el botón a **"Ver ⬇"**.
 
 ## Pendiente
 
-* \[ \] **Desarrollo de Fase 7:** Investigar la estructura exacta de `localconfig.vdf` de Steam para la extracción de `LastPlayed` y AppIDs.
+* \[ \] **Juegos fuera de Steam (opcional):** Añadir detección para Epic Games / accesos directos recientes si se desea ampliar más allá de Steam.
 * \[ \] **`.tmp` en Descargas:** archivos `.tmp` de otras apps pueden dar falsos "Descargando".
 * \[ \] Publicar la extensión en la Chrome Web Store.
 * \[ \] Soporte de Firefox (API `browser.downloads`, extensión aparte).

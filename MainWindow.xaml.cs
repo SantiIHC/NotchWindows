@@ -15,9 +15,10 @@ namespace IslaDinamica;
 
 public partial class MainWindow : Window
 {
-    enum IslandTab { Summary, Music, Downloads }
+    enum IslandTab { Summary, Music, Downloads, Games }
 
     static readonly SolidColorBrush s_whiteBrush = CreateFrozenBrush(0xF5, 0xF5, 0xF7);
+    static readonly SolidColorBrush s_purpleBrush = CreateFrozenBrush(0xA7, 0x8B, 0xFA);
     static readonly SolidColorBrush s_activeTabBg = CreateFrozenBrush(0x28, 0x28, 0x2F);
     static readonly SolidColorBrush s_idleTabBg = CreateFrozenBrush(0x14, 0x14, 0x17);
     static readonly SolidColorBrush s_idleTabFg = CreateFrozenBrush(0x8E, 0x8E, 0x93);
@@ -45,6 +46,7 @@ public partial class MainWindow : Window
 
     readonly MediaService _media = new();
     readonly DownloadService _downloads = new();
+    readonly GameLauncherService _games = new();
     readonly StringBuilder _classNameBuf = new(64);
 
     readonly DispatcherTimer _mainTimer = new() { Interval = TimeSpan.FromMilliseconds(500) };
@@ -73,16 +75,23 @@ public partial class MainWindow : Window
     bool _expanded;
     double _currentDlFraction;
     IslandTab _selectedTab = IslandTab.Music;
+    IReadOnlyList<GameEntry> _recentGames = Array.Empty<GameEntry>();
+    string? _activeSteamAppId;
+    double _activeSteamFraction;
+    bool _activeSteamPaused;
 
-    // Tamaños de la isla
+    // Tamaños de la isla (base 1.0x para pantalla de laptop ~1280 DIPs; escala suavemente en monitores grandes)
+    const double BaseWinW = 480, BaseWinH = 235;
     const double CompactW = 240, CompactH = 36;
-    const double ExpandedW = 420, MusicH = 190, DownloadH = 132, SummaryH = 132;
+    const double ExpandedW = 446, MusicH = 190, DownloadH = 132, SummaryH = 132;
+    double GamesH => _recentGames.Count > 1 ? 196 : 146;
 
     bool HasDownloadActivity => _activeDownloads > 0 || _showCompleted;
     double ExpandedH => _selectedTab switch
     {
         IslandTab.Downloads => DownloadH,
         IslandTab.Summary => SummaryH,
+        IslandTab.Games => GamesH,
         _ => MusicH
     };
 
@@ -159,6 +168,9 @@ public partial class MainWindow : Window
         _downloads.Changed += u => Dispatcher.Invoke(() => OnDownload(u));
         _downloads.Start();
 
+        _games.Changed += list => Dispatcher.Invoke(() => ApplyGames(list));
+        _ = _games.RefreshAsync(4);
+
         _media.Changed += info => Dispatcher.Invoke(() => Apply(info));
         try { await _media.InitAsync(); }
         catch { TitleText.Text = "Multimedia no disponible"; }
@@ -175,6 +187,8 @@ public partial class MainWindow : Window
         if ((DateTime.UtcNow - _lastDlUpdateUtc).TotalSeconds < 4) return;
 
         _activeDownloads = 0;
+        _activeSteamAppId = null;
+        UpdateFeaturedGameStatus();
         SetRingProgress(0);
         CompactDlRing.Stroke = s_greenBrush;
         CompactDlIcon.Foreground = s_greenBrush;
@@ -298,6 +312,11 @@ public partial class MainWindow : Window
     {
         bool changed = _selectedTab != tab;
         _selectedTab = tab;
+        if (tab == IslandTab.Games)
+        {
+            ApplyGames(_games.GetRecentGames(4));
+            _ = _games.RefreshAsync(4);
+        }
         RefreshTabVisuals(animate && changed);
     }
 
@@ -306,9 +325,11 @@ public partial class MainWindow : Window
         bool isSummary = _selectedTab == IslandTab.Summary;
         bool isMusic = _selectedTab == IslandTab.Music;
         bool isDl = _selectedTab == IslandTab.Downloads;
+        bool isGames = _selectedTab == IslandTab.Games;
         SummaryPanel.Visibility = isSummary ? Visibility.Visible : Visibility.Collapsed;
         MusicPanel.Visibility = isMusic ? Visibility.Visible : Visibility.Collapsed;
         DownloadPanel.Visibility = isDl ? Visibility.Visible : Visibility.Collapsed;
+        GamesPanel.Visibility = isGames ? Visibility.Visible : Visibility.Collapsed;
 
         TabSummaryBtn.Background = isSummary ? s_activeTabBg : s_idleTabBg;
         TabSummaryBtn.Foreground = isSummary ? Brushes.White : s_idleTabFg;
@@ -316,6 +337,9 @@ public partial class MainWindow : Window
         TabMusicBtn.Foreground = isMusic ? Brushes.White : s_idleTabFg;
         TabDlBtn.Background = isDl ? s_activeTabBg : s_idleTabBg;
         TabDlBtn.Foreground = isDl ? Brushes.White : s_idleTabFg;
+        TabGamesBtn.Background = isGames ? s_activeTabBg : s_idleTabBg;
+        TabGamesBtn.Foreground = isGames ? Brushes.White : s_idleTabFg;
+        UpdateExpandedEq();
 
         if (animate)
         {
@@ -365,6 +389,114 @@ public partial class MainWindow : Window
     void TabSummary_Click(object sender, RoutedEventArgs e) => SelectTab(IslandTab.Summary, animate: true);
     void TabMusic_Click(object sender, RoutedEventArgs e) => SelectTab(IslandTab.Music, animate: true);
     void TabDl_Click(object sender, RoutedEventArgs e) => SelectTab(IslandTab.Downloads, animate: true);
+    void TabGames_Click(object sender, RoutedEventArgs e) => SelectTab(IslandTab.Games, animate: true);
+
+    // ---------- Juegos recientes (Fase 7) ----------
+    void ApplyGames(IReadOnlyList<GameEntry> games)
+    {
+        bool countChanged = (_recentGames.Count > 1) != (games.Count > 1);
+        _recentGames = games;
+
+        if (games.Count == 0)
+        {
+            FeaturedGameCover.Source = null;
+            FeaturedGameBadge.Text = "STEAM";
+            FeaturedGameBadge.Foreground = s_purpleBrush;
+            FeaturedGameTitle.Text = "Sin juegos detectados";
+            FeaturedGameSub.Text = "Instala o abre un juego en Steam para verlo aquí";
+            FeaturedGameDlTrack.Visibility = Visibility.Collapsed;
+            FeaturedPlayBtn.Visibility = Visibility.Collapsed;
+            RecentGamesRow.Visibility = Visibility.Collapsed;
+            if (countChanged && _expanded && _selectedTab == IslandTab.Games) Animate(true);
+            return;
+        }
+
+        var feat = games[0];
+        FeaturedGameCover.Source = feat.Cover;
+        FeaturedGameTitle.Text = feat.Name;
+        FeaturedPlayBtn.Visibility = Visibility.Visible;
+        UpdateFeaturedGameStatus();
+
+        RecentGamesRow.Visibility = games.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
+        BindRecentSlot(games, 1, RecentGameBtn1, RecentGameImg1, RecentGameName1);
+        BindRecentSlot(games, 2, RecentGameBtn2, RecentGameImg2, RecentGameName2);
+        BindRecentSlot(games, 3, RecentGameBtn3, RecentGameImg3, RecentGameName3);
+
+        if (countChanged && _expanded && _selectedTab == IslandTab.Games) Animate(true);
+    }
+
+    static void BindRecentSlot(IReadOnlyList<GameEntry> games, int idx, Button btn, Image img, TextBlock title)
+    {
+        if (idx >= games.Count)
+        {
+            btn.Visibility = Visibility.Collapsed;
+            return;
+        }
+        var g = games[idx];
+        btn.Visibility = Visibility.Visible;
+        btn.ToolTip = $"Jugar {g.Name} ({GameLauncherService.FormatRelativeTime(g.LastPlayedUtc, g.HasRealLastPlayed)})";
+        img.Source = g.Cover;
+        title.Text = g.Name;
+    }
+
+    void UpdateFeaturedGameStatus()
+    {
+        if (_recentGames.Count == 0) return;
+        var feat = _recentGames[0];
+        bool isUpdatingThisGame = !string.IsNullOrEmpty(_activeSteamAppId) &&
+                                  string.Equals(_activeSteamAppId, feat.Id, StringComparison.OrdinalIgnoreCase);
+
+        if (isUpdatingThisGame)
+        {
+            var accent = _activeSteamPaused ? s_amberBrush : s_greenBrush;
+            int pct = (int)Math.Round(_activeSteamFraction * 100);
+            FeaturedGameBadge.Text = _activeSteamPaused ? "ACTUALIZACIÓN EN PAUSA" : "ACTUALIZANDO EN STEAM";
+            FeaturedGameBadge.Foreground = accent;
+            FeaturedGameSub.Text = $"Descarga en curso · {pct}%";
+            FeaturedGameDlTrack.Visibility = Visibility.Visible;
+            FeaturedGameDlFill.Background = accent;
+            double trackW = FeaturedGameDlTrack.ActualWidth > 0 ? FeaturedGameDlTrack.ActualWidth : 190;
+            FeaturedGameDlFill.Width = trackW * Math.Clamp(_activeSteamFraction, 0.04, 1.0);
+            FeaturedPlayBtn.Background = accent;
+            FeaturedPlayBtnText.Text = "Ver ⬇";
+            FeaturedPlayBtn.ToolTip = "Ver progreso de la actualización";
+        }
+        else
+        {
+            FeaturedGameBadge.Text = "ÚLTIMO JUGADO";
+            FeaturedGameBadge.Foreground = s_purpleBrush;
+            FeaturedGameSub.Text = GameLauncherService.FormatRelativeTime(feat.LastPlayedUtc, feat.HasRealLastPlayed);
+            FeaturedGameDlTrack.Visibility = Visibility.Collapsed;
+            FeaturedPlayBtn.Background = s_purpleBrush;
+            FeaturedPlayBtnText.Text = "Jugar ▶";
+            FeaturedPlayBtn.ToolTip = $"Ejecutar {feat.Name}";
+        }
+    }
+
+    void FeaturedGamePlay_Click(object sender, RoutedEventArgs e)
+    {
+        if (_recentGames.Count == 0) return;
+        var feat = _recentGames[0];
+        if (!string.IsNullOrEmpty(_activeSteamAppId) &&
+            string.Equals(_activeSteamAppId, feat.Id, StringComparison.OrdinalIgnoreCase))
+        {
+            SelectTab(IslandTab.Downloads, animate: true);
+            return;
+        }
+        _games.Launch(feat.LaunchUri);
+        Animate(false);
+    }
+
+    void RecentGame1_Click(object sender, RoutedEventArgs e) => LaunchRecentSlot(1);
+    void RecentGame2_Click(object sender, RoutedEventArgs e) => LaunchRecentSlot(2);
+    void RecentGame3_Click(object sender, RoutedEventArgs e) => LaunchRecentSlot(3);
+
+    void LaunchRecentSlot(int idx)
+    {
+        if (idx >= _recentGames.Count) return;
+        _games.Launch(_recentGames[idx].LaunchUri);
+        Animate(false);
+    }
 
     // ---------- Batería ----------
     void OnPowerModeChanged(object? sender, PowerModeChangedEventArgs e) =>
@@ -485,6 +617,18 @@ public partial class MainWindow : Window
             scaleX = dpiX / 96.0;
         else
             scaleX = VisualTreeHelper.GetDpi(this).DpiScaleX;
+
+        // Escalado proporcional moderado según el ancho lógico del monitor:
+        // - En la laptop (~1280–1366 DIPs, ej. 1920x1200 al 150%): uiScale = 1.00 (tamaño actual intacto).
+        // - En un monitor 1080p al 100% (1920 DIPs): uiScale ≈ 1.21 (+21%).
+        // - En un monitor 1440p/2K (2560 DIPs): uiScale ≈ 1.35 (+35%, tope 1.38).
+        double logicalScreenW = bounds.Width / scaleX;
+        double uiScale = Math.Clamp(1.0 + Math.Max(0, (logicalScreenW - 1320.0) / 1320.0) * 0.45, 1.0, 1.38);
+
+        IslandScale.ScaleX = uiScale;
+        IslandScale.ScaleY = uiScale;
+        Width = Math.Ceiling(BaseWinW * uiScale);
+        Height = Math.Ceiling(BaseWinH * uiScale);
 
         int physW = (int)Math.Round(Width * scaleX);
         int physX = bounds.Left + (bounds.Width - physW) / 2;
@@ -748,6 +892,10 @@ public partial class MainWindow : Window
                 }
 
                 SetRingProgress(frac);
+                _activeSteamAppId = u.SourceApp == "Steam" ? u.AppId : null;
+                _activeSteamFraction = frac;
+                _activeSteamPaused = paused;
+                UpdateFeaturedGameStatus();
                 CompactDlIcon.Text = paused ? "⏸" : "⬇";
                 DlIcon.Text = paused ? "⏸" : "⬇";
                 OpenBtn.Visibility = Visibility.Collapsed;
@@ -764,6 +912,8 @@ public partial class MainWindow : Window
                 break;
 
             case DownloadStatus.Completed:
+                _activeSteamAppId = null;
+                UpdateFeaturedGameStatus();
                 _lastFinalPath = u.FinalPath;
                 CompactDlRing.Stroke = s_greenBrush;
                 CompactDlIcon.Foreground = s_greenBrush;
@@ -789,6 +939,8 @@ public partial class MainWindow : Window
                 break;
 
             case DownloadStatus.Cancelled:
+                _activeSteamAppId = null;
+                UpdateFeaturedGameStatus();
                 _showCompleted = false;
                 if (_activeDownloads == 0)
                 {
