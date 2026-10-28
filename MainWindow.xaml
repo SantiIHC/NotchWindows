@@ -1,7 +1,7 @@
 <Window x:Class="IslaDinamica.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="IslaDinamica" Width="480" Height="235"
+        Title="IslaDinamica" Width="550" Height="250"
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
         Topmost="True" ShowInTaskbar="False" ResizeMode="NoResize"
         WindowStartupLocation="Manual" Loaded="Window_Loaded">
@@ -110,26 +110,83 @@
             </Setter>
         </Style>
 
-        <!-- Estilo para las pestañas/selectores y botones de acción de descarga -->
+        <!-- Estilo para las pestañas/selectores y botones de acción -->
         <Style x:Key="TabPillBtn" TargetType="Button">
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Foreground" Value="#98989F"/>
             <Setter Property="Background" Value="#161618"/>
+            <Setter Property="BorderBrush" Value="#26262A"/>
             <Setter Property="FontSize" Value="11"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="Margin" Value="2.5,0"/>
+            <Setter Property="Margin" Value="2,0"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
                         <Border x:Name="PillBorder" Background="{TemplateBinding Background}"
-                                BorderBrush="#26262A" BorderThickness="1"
-                                CornerRadius="10" Padding="8,3">
+                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1"
+                                CornerRadius="10" Padding="7.5,3">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="PillBorder" Property="BorderBrush" Value="#45454C"/>
                                 <Setter Property="Foreground" Value="White"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Botón de preset de tiempo (3m, 5m, 10m, 15m, 30m) -->
+        <Style x:Key="TimerPresetBtn" TargetType="Button">
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Foreground" Value="#D1D1D6"/>
+            <Setter Property="Background" Value="#17171C"/>
+            <Setter Property="BorderBrush" Value="#292932"/>
+            <Setter Property="FontSize" Value="10.5"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Margin" Value="2,0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="PresetBorder" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1"
+                                CornerRadius="9" Padding="8,3">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="PresetBorder" Property="Background" Value="#24242D"/>
+                                <Setter TargetName="PresetBorder" Property="BorderBrush" Value="#FF9F0A"/>
+                                <Setter Property="Foreground" Value="#FFFFFF"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="PresetBorder" Property="Background" Value="#2E2618"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Flechas sutiles ▲ / ▼ encima y debajo de los dígitos del temporizador -->
+        <Style x:Key="TimerStepBtn" TargetType="Button">
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Foreground" Value="#6E6E77"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="FontSize" Value="9"/>
+            <Setter Property="Width" Value="38"/>
+            <Setter Property="Height" Value="14"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="Transparent">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Foreground" Value="#FF9F0A"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -169,15 +226,15 @@
     <Grid>
         <Border x:Name="Island" Background="#050507" CornerRadius="0,0,20,20"
                 BorderThickness="1,0,1,1"
-                Width="240" Height="36" HorizontalAlignment="Center" VerticalAlignment="Top"
+                Width="252" Height="36" HorizontalAlignment="Center" VerticalAlignment="Top"
                 ClipToBounds="True" MouseEnter="Island_MouseEnter" MouseLeave="Island_MouseLeave">
             <Border.LayoutTransform>
                 <ScaleTransform x:Name="IslandScale" ScaleX="1" ScaleY="1"/>
             </Border.LayoutTransform>
             <Border.BorderBrush>
                 <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                    <GradientStop Color="#1F1F24" Offset="0"/>
-                    <GradientStop Color="#2E2E36" Offset="1"/>
+                    <GradientStop x:Name="IslandBorderStop0" Color="#1F1F24" Offset="0"/>
+                    <GradientStop x:Name="IslandBorderStop1" Color="#2E2E36" Offset="1"/>
                 </LinearGradientBrush>
             </Border.BorderBrush>
             <Border.ContextMenu>
@@ -188,38 +245,72 @@
 
             <Grid>
                 <!-- ==================== VISTA COMPACTA (EN REPOSO) ==================== -->
-                <Grid x:Name="CompactBar" Margin="10,0">
+                <!-- Columnas simétricas (CompactColLeft == CompactColRight) para que la hora central nunca se descentre -->
+                <Grid x:Name="CompactBar" Margin="11,0">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="82"/>
+                        <ColumnDefinition x:Name="CompactColLeft" Width="94"/>
                         <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="82"/>
+                        <ColumnDefinition x:Name="CompactColRight" Width="94"/>
                     </Grid.ColumnDefinitions>
 
-                    <!-- Izquierda: Círculo verde de progreso de descarga -->
-                    <Grid x:Name="CompactDlIndicator" Grid.Column="0" Width="22" Height="22"
-                          HorizontalAlignment="Left" VerticalAlignment="Center"
-                          Visibility="Collapsed" Cursor="Hand" ToolTip="Ver descarga"
-                          Background="Transparent" MouseLeftButtonDown="CompactDl_Click">
-                        <Ellipse Width="20" Height="20" Stroke="#1C3824" StrokeThickness="2.4"/>
-                        <Ellipse x:Name="CompactDlRing" Width="20" Height="20"
-                                 Stroke="#30D158" StrokeThickness="2.4"
-                                 StrokeStartLineCap="Round" StrokeEndLineCap="Round"
-                                 StrokeDashArray="0 100" RenderTransformOrigin="0.5,0.5">
-                            <Ellipse.RenderTransform>
-                                <RotateTransform x:Name="CompactDlRingRotate" Angle="-90"/>
-                            </Ellipse.RenderTransform>
-                        </Ellipse>
-                        <TextBlock x:Name="CompactDlIcon" Text="⬇" Foreground="#30D158" FontSize="9"
-                                   FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                    </Grid>
+                    <!-- Izquierda: Fusión inteligente (Opción A) de Descarga + Temporizador -->
+                    <StackPanel Grid.Column="0" Orientation="Horizontal"
+                                HorizontalAlignment="Left" VerticalAlignment="Center">
+                        <!-- Círculo verde de progreso de descarga -->
+                        <Grid x:Name="CompactDlIndicator" Width="22" Height="22" Margin="0,0,6,0"
+                              VerticalAlignment="Center"
+                              Visibility="Collapsed" Cursor="Hand" ToolTip="Ver descarga"
+                              Background="Transparent" MouseLeftButtonDown="CompactDl_Click">
+                            <Ellipse Width="20" Height="20" Stroke="#1C3824" StrokeThickness="2.4"/>
+                            <Ellipse x:Name="CompactDlRing" Width="20" Height="20"
+                                     Stroke="#30D158" StrokeThickness="2.4"
+                                     StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                     StrokeDashArray="0 100" RenderTransformOrigin="0.5,0.5">
+                                <Ellipse.RenderTransform>
+                                    <RotateTransform x:Name="CompactDlRingRotate" Angle="-90"/>
+                                </Ellipse.RenderTransform>
+                            </Ellipse>
+                            <TextBlock x:Name="CompactDlIcon" Text="⬇" Foreground="#30D158" FontSize="9"
+                                       FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Grid>
 
-                    <!-- Centro: Hora actual -->
+                        <!-- Indicador de Temporizador en reposo:
+                             - Solo temporizador: muestra [ ⏱ 14:59 ○ ]
+                             - Temporizador + descarga activa: oculta ⏱ y ○ para mostrar [ ⬇ ] 14:59 limpio -->
+                        <StackPanel x:Name="CompactTimerIndicator" Orientation="Horizontal"
+                                    VerticalAlignment="Center" Visibility="Collapsed"
+                                    Cursor="Hand" ToolTip="Ver temporizador"
+                                    Background="Transparent" MouseLeftButtonDown="CompactTimer_Click"
+                                    RenderTransformOrigin="0.5,0.5">
+                            <StackPanel.RenderTransform>
+                                <ScaleTransform x:Name="CompactTimerScale" ScaleX="1" ScaleY="1"/>
+                            </StackPanel.RenderTransform>
+                            <TextBlock x:Name="CompactTimerIcon" Text="⏱" Foreground="#FF9F0A" FontSize="11"
+                                       VerticalAlignment="Center" Margin="0,0,3.5,0"/>
+                            <TextBlock x:Name="CompactTimerText" Text="15:00" Foreground="#FF9F0A"
+                                       FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            <Grid x:Name="CompactTimerRingHost" Width="15" Height="15" Margin="5,0,0,0"
+                                  VerticalAlignment="Center">
+                                <Ellipse Width="14" Height="14" Stroke="#3A2608" StrokeThickness="2"/>
+                                <Ellipse x:Name="CompactTimerRing" Width="14" Height="14"
+                                         Stroke="#FF9F0A" StrokeThickness="2"
+                                         StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                         StrokeDashArray="18.85 100" RenderTransformOrigin="0.5,0.5">
+                                    <Ellipse.RenderTransform>
+                                        <RotateTransform Angle="-90"/>
+                                    </Ellipse.RenderTransform>
+                                </Ellipse>
+                            </Grid>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <!-- Centro: Hora actual (más grande, siempre centrada y sin fecha en reposo) -->
                     <TextBlock x:Name="ClockText" Grid.Column="1" Text="12:00"
-                               Foreground="#F5F5F7" FontSize="12.5" FontWeight="SemiBold"
+                               Foreground="#F5F5F7" FontSize="14.5" FontWeight="Bold"
                                HorizontalAlignment="Center" VerticalAlignment="Center"
                                Cursor="Hand" MouseLeftButtonDown="Clock_Click"/>
 
-                    <!-- Derecha: Ecualizador animado de música + batería -->
+                    <!-- Derecha: Ecualizador animado de música + Batería (icono a la izquierda + % a la derecha) -->
                     <StackPanel Grid.Column="2" Orientation="Horizontal"
                                 HorizontalAlignment="Right" VerticalAlignment="Center">
                         <Grid x:Name="CompactMusicIndicator" Width="26" Height="20" Margin="0,0,6,0"
@@ -234,27 +325,27 @@
                             </StackPanel>
                         </Grid>
 
-                        <!-- Batería: porcentaje + icono (se oculta si el equipo no tiene batería) -->
+                        <!-- Batería: icono a la izquierda + porcentaje más grande a la derecha -->
                         <StackPanel x:Name="CompactBatteryIndicator" Orientation="Horizontal" VerticalAlignment="Center"
                                     Visibility="Collapsed" Cursor="Hand" ToolTip="Ver batería"
                                     Background="Transparent" MouseLeftButtonDown="CompactBattery_Click">
-                            <TextBlock x:Name="CompactBatteryText" Text="100%" Foreground="#F5F5F7"
-                                       FontSize="10.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                            <Grid Width="21" Height="10" Margin="4,0,0,0" VerticalAlignment="Center">
-                                <Border Width="18" Height="10" HorizontalAlignment="Left"
-                                        BorderBrush="#6E6E78" BorderThickness="1" CornerRadius="3"/>
-                                <Border x:Name="CompactBatteryFill" Height="6" Width="14" Margin="2,0,0,0"
+                            <Grid Width="23" Height="11.5" Margin="0,0,4.5,0" VerticalAlignment="Center">
+                                <Border Width="20" Height="11.5" HorizontalAlignment="Left"
+                                        BorderBrush="#8E8E98" BorderThickness="1.2" CornerRadius="3.2"/>
+                                <Border x:Name="CompactBatteryFill" Height="7.1" Width="15.6" Margin="2.2,0,0,0"
                                         HorizontalAlignment="Left" VerticalAlignment="Center"
-                                        CornerRadius="1.5" Background="#F5F5F7"/>
-                                <Border Width="2" Height="4" HorizontalAlignment="Right" VerticalAlignment="Center"
-                                        Background="#6E6E78" CornerRadius="0,1,1,0"/>
+                                        CornerRadius="1.6" Background="#F5F5F7"/>
+                                <Border Width="2" Height="4.5" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                        Background="#8E8E98" CornerRadius="0,1.2,1.2,0"/>
                             </Grid>
+                            <TextBlock x:Name="CompactBatteryText" Text="100%" Foreground="#F5F5F7"
+                                       FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
                         </StackPanel>
                     </StackPanel>
                 </Grid>
 
                 <!-- ==================== VISTA EXPANDIDA ==================== -->
-                <Grid x:Name="ExpandedPanel" Opacity="0" Margin="16,12,16,14" IsHitTestVisible="False">
+                <Grid x:Name="ExpandedPanel" Opacity="0" Margin="15,12,15,14" IsHitTestVisible="False">
                     <Grid.RenderTransform>
                         <TranslateTransform x:Name="ExpandedSlide" Y="-6"/>
                     </Grid.RenderTransform>
@@ -263,12 +354,18 @@
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
-                    <!-- Barra superior: Hora a la izquierda + selectores clickeables (Música / Descargas) a la derecha -->
+                    <!-- Barra superior: Hora + fecha a la izquierda ("12:14 · mié 28 oct.") + pestañas a la derecha -->
                     <Grid Grid.Row="0" Margin="0,0,0,8">
-                        <TextBlock x:Name="ExpandedClockText" Text="12:00" Foreground="#8E8E93"
-                                   FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="ExpandedClockText" Grid.Column="0" Text="12:00 · mié 28 oct." Foreground="#8E8E93"
+                                   FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"
+                                   HorizontalAlignment="Left" Margin="0,0,10,0"/>
 
-                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
                             <Button x:Name="TabSummaryBtn" Style="{StaticResource TabPillBtn}" Click="TabSummary_Click">
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="● " Foreground="#64D2FF" FontSize="9" VerticalAlignment="Center"/>
@@ -291,6 +388,12 @@
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="◆ " Foreground="#A78BFA" FontSize="9.5" VerticalAlignment="Center"/>
                                     <TextBlock Text="Juegos"/>
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="TabTimerBtn" Style="{StaticResource TabPillBtn}" Click="TabTimer_Click">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="⏱ " Foreground="#FF9F0A" FontSize="10" VerticalAlignment="Center"/>
+                                    <TextBlock Text="Temp."/>
                                 </StackPanel>
                             </Button>
                         </StackPanel>
@@ -365,7 +468,6 @@
                                             <Image x:Name="Cover" Stretch="UniformToFill"/>
                                         </Grid>
                                     </Border>
-                                    <!-- Punto de estado: verde = sonando, gris = en pausa -->
                                     <Ellipse x:Name="CoverStateDot" Width="13" Height="13" Fill="#30D158"
                                              Stroke="#050507" StrokeThickness="2.2"
                                              HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,-4,-4"/>
@@ -378,7 +480,6 @@
                                                TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
                                 </StackPanel>
 
-                                <!-- Barras de audio animadas (solo mientras suena y la isla está abierta) -->
                                 <StackPanel x:Name="ExpandedEq" Grid.Column="2" Orientation="Horizontal"
                                             VerticalAlignment="Center" Height="18" Margin="0,0,2,0">
                                     <Border x:Name="XEqBar1" Width="3" Height="6" CornerRadius="1.5" Background="#F5F5F7" Margin="1.5,0" VerticalAlignment="Center"/>
@@ -406,7 +507,7 @@
                                            FontWeight="SemiBold" VerticalAlignment="Center" MinWidth="26" TextAlignment="Right"/>
                             </Grid>
 
-                            <!-- Fila 3: controles centrados (Anterior · Play/Pausa · Siguiente) -->
+                            <!-- Fila 3: controles centrados -->
                             <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,8,0,0">
                                 <Button Style="{StaticResource MediaCircleBtn}" Click="Prev_Click" ToolTip="Anterior">
                                     <Path Data="M 0,1 L 2,1 L 2,11 L 0,11 Z M 3.2,6 L 10.5,1 L 10.5,11 Z"
@@ -433,7 +534,6 @@
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
 
-                            <!-- Círculo grande de progreso verde en el panel expandido -->
                             <Grid Width="56" Height="56" VerticalAlignment="Center">
                                 <Ellipse Width="52" Height="52" Fill="#0F1F15" Stroke="#1C3824" StrokeThickness="3.5"/>
                                 <Ellipse x:Name="ExpandedDlRing" Width="52" Height="52"
@@ -455,7 +555,6 @@
                                     <RowDefinition Height="Auto"/>
                                 </Grid.RowDefinitions>
 
-                                <!-- Cabecera de descarga + Botón Pausar/Continuar a la derecha -->
                                 <Grid Grid.Row="0">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*"/>
@@ -469,9 +568,7 @@
                                                    TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
                                     </StackPanel>
 
-                                    <!-- Botón Pausar / Continuar descarga -->
                                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                                        <!-- Botón Cancelar descarga (se muestra junto con el de pausa; pide un segundo clic) -->
                                         <Button x:Name="DlCancelBtn" Style="{StaticResource MediaCircleBtn}"
                                                 Width="32" Height="32" Margin="0,0,8,0"
                                                 Visibility="{Binding Visibility, ElementName=DlPauseResumeBtn}"
@@ -482,7 +579,6 @@
                                                   Stretch="Uniform" Width="10" Height="10"/>
                                         </Button>
 
-                                        <!-- Botón Pausar / Continuar descarga -->
                                         <Button x:Name="DlPauseResumeBtn" Style="{StaticResource MediaCircleBtn}"
                                                 Width="32" Height="32" Visibility="Collapsed"
                                                 Click="DlPauseResume_Click" ToolTip="Pausar / Continuar descarga">
@@ -513,7 +609,6 @@
                                 <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
 
-                            <!-- Fila 1: Último juego destacado -->
                             <Border Grid.Row="0" Background="#101016" BorderBrush="#23232E" BorderThickness="1"
                                     CornerRadius="12" Padding="9,8">
                                 <Grid>
@@ -523,7 +618,6 @@
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
 
-                                    <!-- Carátula panorámica de Steam -->
                                     <Border CornerRadius="8" Width="96" Height="50" Background="#181822"
                                             BorderBrush="#2C2C3A" BorderThickness="1" ClipToBounds="True">
                                         <Grid>
@@ -536,13 +630,12 @@
                                     <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="12,0,10,0">
                                         <TextBlock x:Name="FeaturedGameBadge" Text="ÚLTIMO JUGADO" Foreground="#A78BFA"
                                                    FontSize="9" FontWeight="Bold"/>
-                                        <TextBlock x:Name="FeaturedGameTitle" Text="Buscando juegos en Steam…"
+                                        <TextBlock x:Name="FeaturedGameTitle" Text="Buscando juegos…"
                                                    Foreground="#F5F5F7" FontSize="13.5" FontWeight="SemiBold"
                                                    TextTrimming="CharacterEllipsis" Margin="0,1,0,0"/>
                                         <TextBlock x:Name="FeaturedGameSub" Text="Tus últimos juegos aparecerán aquí"
                                                    Foreground="#8E8E93" FontSize="11"
                                                    TextTrimming="CharacterEllipsis" Margin="0,1,0,0"/>
-                                        <!-- Si se está actualizando en Steam, muestra el progreso aquí mismo -->
                                         <Grid x:Name="FeaturedGameDlTrack" Height="4" Margin="0,5,0,0" Visibility="Collapsed">
                                             <Border Background="#1C3824" CornerRadius="2"/>
                                             <Border x:Name="FeaturedGameDlFill" Background="#30D158" CornerRadius="2"
@@ -550,17 +643,15 @@
                                         </Grid>
                                     </StackPanel>
 
-                                    <!-- Botón grande Ejecutar / Ver actualización -->
                                     <Button x:Name="FeaturedPlayBtn" Grid.Column="2" Style="{StaticResource TabPillBtn}"
                                             Background="#A78BFA" Foreground="#07070A" FontWeight="Bold" FontSize="11.5"
                                             VerticalAlignment="Center" Margin="0" Visibility="Collapsed"
-                                            Click="FeaturedGamePlay_Click" ToolTip="Ejecutar en Steam">
+                                            Click="FeaturedGamePlay_Click" ToolTip="Ejecutar juego">
                                         <TextBlock x:Name="FeaturedPlayBtnText" Text="Jugar ▶" Margin="4,2"/>
                                     </Button>
                                 </Grid>
                             </Border>
 
-                            <!-- Fila 2: Lista compacta de recientes (siguientes 3 juegos) -->
                             <Grid x:Name="RecentGamesRow" Grid.Row="1" Margin="0,8,0,0" Visibility="Collapsed">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*"/>
@@ -568,7 +659,6 @@
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
 
-                                <!-- Reciente #2 -->
                                 <Button x:Name="RecentGameBtn1" Grid.Column="0" Style="{StaticResource GameRecentCardBtn}"
                                         Margin="0,0,4,0" Visibility="Collapsed" Click="RecentGame1_Click">
                                     <Grid>
@@ -588,7 +678,6 @@
                                     </Grid>
                                 </Button>
 
-                                <!-- Reciente #3 -->
                                 <Button x:Name="RecentGameBtn2" Grid.Column="1" Style="{StaticResource GameRecentCardBtn}"
                                         Margin="2,0,2,0" Visibility="Collapsed" Click="RecentGame2_Click">
                                     <Grid>
@@ -608,7 +697,6 @@
                                     </Grid>
                                 </Button>
 
-                                <!-- Reciente #4 -->
                                 <Button x:Name="RecentGameBtn3" Grid.Column="2" Style="{StaticResource GameRecentCardBtn}"
                                         Margin="4,0,0,0" Visibility="Collapsed" Click="RecentGame3_Click">
                                     <Grid>
@@ -628,6 +716,96 @@
                                     </Grid>
                                 </Button>
                             </Grid>
+                        </Grid>
+
+                        <!-- ==================== PANEL DE TEMPORIZADOR (FASE 8) ==================== -->
+                        <Grid x:Name="TimerPanel" Visibility="Collapsed" VerticalAlignment="Center"
+                              Background="Transparent" MouseWheel="TimerPanel_MouseWheel">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="1"/>
+                                <ColumnDefinition Width="154"/>
+                            </Grid.ColumnDefinitions>
+
+                            <!-- Columna izquierda: Dígitos grandes ajustables con rueda/flechas + presets rápidos -->
+                            <StackPanel Grid.Column="0" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,0,10,0">
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,-2">
+                                    <Button Style="{StaticResource TimerStepBtn}" Click="TimerMinUp_Click" ToolTip="+1 minuto (o gira la rueda)">▲</Button>
+                                    <Border Width="22"/>
+                                    <Button Style="{StaticResource TimerStepBtn}" Click="TimerSecUp_Click" ToolTip="+15 segundos (o gira la rueda)">▲</Button>
+                                </StackPanel>
+
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                    <TextBlock x:Name="TimerBigMinText" Text="15" Foreground="#F5F5F7"
+                                               FontSize="44" FontWeight="Bold" Width="62" TextAlignment="Right"
+                                               Cursor="SizeNS" Background="Transparent"
+                                               ToolTip="Gira la rueda del ratón para cambiar los minutos"
+                                               MouseWheel="TimerMin_MouseWheel"/>
+                                    <TextBlock Text=":" Foreground="#FF9F0A" FontSize="40" FontWeight="Bold"
+                                               Margin="3,-4,3,0" VerticalAlignment="Center"/>
+                                    <TextBlock x:Name="TimerBigSecText" Text="00" Foreground="#F5F5F7"
+                                               FontSize="44" FontWeight="Bold" Width="62" TextAlignment="Left"
+                                               Cursor="SizeNS" Background="Transparent"
+                                               ToolTip="Gira la rueda del ratón para cambiar los segundos"
+                                               MouseWheel="TimerSec_MouseWheel"/>
+                                </StackPanel>
+
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,-4,0,6">
+                                    <Button Style="{StaticResource TimerStepBtn}" Click="TimerMinDown_Click" ToolTip="-1 minuto">▼</Button>
+                                    <Border Width="22"/>
+                                    <Button Style="{StaticResource TimerStepBtn}" Click="TimerSecDown_Click" ToolTip="-15 segundos">▼</Button>
+                                </StackPanel>
+
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                    <Button x:Name="Preset3Btn" Style="{StaticResource TimerPresetBtn}" Tag="3" Click="TimerPreset_Click" Content="3m"/>
+                                    <Button x:Name="Preset5Btn" Style="{StaticResource TimerPresetBtn}" Tag="5" Click="TimerPreset_Click" Content="5m"/>
+                                    <Button x:Name="Preset10Btn" Style="{StaticResource TimerPresetBtn}" Tag="10" Click="TimerPreset_Click" Content="10m"/>
+                                    <Button x:Name="Preset15Btn" Style="{StaticResource TimerPresetBtn}" Tag="15" Click="TimerPreset_Click" Content="15m"/>
+                                    <Button x:Name="Preset30Btn" Style="{StaticResource TimerPresetBtn}" Tag="30" Click="TimerPreset_Click" Content="30m"/>
+                                </StackPanel>
+                            </StackPanel>
+
+                            <Border Grid.Column="1" Background="#1D1D24" Width="1" Margin="0,6"/>
+
+                            <!-- Columna derecha: Anillo circular naranja + botón Iniciar / Pausar / Cancelar -->
+                            <StackPanel Grid.Column="2" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="10,0,0,0">
+                                <Grid Width="86" Height="86" HorizontalAlignment="Center">
+                                    <Ellipse Width="80" Height="80" Fill="#12100C" Stroke="#2C2110" StrokeThickness="5"/>
+                                    <Ellipse x:Name="ExpandedTimerRing" Width="80" Height="80"
+                                             Stroke="#FF9F0A" StrokeThickness="5"
+                                             StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                             StrokeDashArray="47.12 100" RenderTransformOrigin="0.5,0.5">
+                                        <Ellipse.RenderTransform>
+                                            <RotateTransform Angle="-90"/>
+                                        </Ellipse.RenderTransform>
+                                    </Ellipse>
+                                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                                        <TextBlock x:Name="TimerRingTimeText" Text="15:00" Foreground="#F5F5F7"
+                                                   FontSize="16" FontWeight="Bold" HorizontalAlignment="Center"/>
+                                        <TextBlock x:Name="TimerRingStateText" Text="LISTO" Foreground="#FF9F0A"
+                                                   FontSize="8.5" FontWeight="Bold" HorizontalAlignment="Center"
+                                                   Margin="0,1,0,0"/>
+                                    </StackPanel>
+                                </Grid>
+
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,9,0,0">
+                                    <Button x:Name="TimerPrimaryBtn" Style="{StaticResource TabPillBtn}"
+                                            Background="#2A1C08" BorderBrush="#FF9F0A" Foreground="#FF9F0A"
+                                            FontSize="11.5" FontWeight="Bold" MinWidth="96"
+                                            Click="TimerPrimary_Click">
+                                        <TextBlock x:Name="TimerPrimaryBtnText" Text="▶ Iniciar" Margin="6,1"/>
+                                    </Button>
+
+                                    <Button x:Name="TimerResetBtn" Style="{StaticResource MediaCircleBtn}"
+                                            Width="27" Height="27" Margin="6,0,0,0" Visibility="Collapsed"
+                                            Click="TimerReset_Click" ToolTip="Cancelar / Reiniciar">
+                                        <Path Data="M 0,0 L 8,8 M 8,0 L 0,8"
+                                              Stroke="#E5E5EA" StrokeThickness="1.7"
+                                              StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                              Stretch="Uniform" Width="8.5" Height="8.5"/>
+                                    </Button>
+                                </StackPanel>
+                            </StackPanel>
                         </Grid>
                     </Grid>
                 </Grid>

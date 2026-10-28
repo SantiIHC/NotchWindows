@@ -1,5 +1,6 @@
 using System.IO;
 using System.Diagnostics;
+using System.Media;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows;
@@ -15,7 +16,7 @@ namespace IslaDinamica;
 
 public partial class MainWindow : Window
 {
-    enum IslandTab { Summary, Music, Downloads, Games }
+    enum IslandTab { Summary, Music, Downloads, Games, Timer }
 
     static readonly SolidColorBrush s_whiteBrush = CreateFrozenBrush(0xF5, 0xF5, 0xF7);
     static readonly SolidColorBrush s_purpleBrush = CreateFrozenBrush(0xA7, 0x8B, 0xFA);
@@ -26,6 +27,11 @@ public partial class MainWindow : Window
     static readonly SolidColorBrush s_idleTabFg = CreateFrozenBrush(0x8E, 0x8E, 0x93);
     static readonly SolidColorBrush s_greenBrush = CreateFrozenBrush(0x30, 0xD1, 0x58);
     static readonly SolidColorBrush s_amberBrush = CreateFrozenBrush(0xFF, 0x9F, 0x0A);
+    static readonly SolidColorBrush s_amberDarkBgBrush = CreateFrozenBrush(0x2A, 0x1C, 0x08);
+    static readonly SolidColorBrush s_amberBorderBrush = CreateFrozenBrush(0x4D, 0x33, 0x10);
+    static readonly SolidColorBrush s_defaultBorderBrush = CreateFrozenBrush(0x26, 0x26, 0x2A);
+    static readonly SolidColorBrush s_presetIdleBg = CreateFrozenBrush(0x17, 0x17, 0x1C);
+    static readonly SolidColorBrush s_presetIdleBorder = CreateFrozenBrush(0x29, 0x29, 0x32);
     static readonly SolidColorBrush s_redBrush = CreateFrozenBrush(0xFF, 0x45, 0x3A);
     static readonly SolidColorBrush s_grayBrush = CreateFrozenBrush(0x8E, 0x8E, 0x93);
 
@@ -52,6 +58,7 @@ public partial class MainWindow : Window
     readonly StringBuilder _classNameBuf = new(64);
 
     readonly DispatcherTimer _mainTimer = new() { Interval = TimeSpan.FromMilliseconds(500) };
+    readonly DispatcherTimer _countdownTimer = new() { Interval = TimeSpan.FromMilliseconds(200) };
     readonly DispatcherTimer _autoCollapseTimer = new() { Interval = TimeSpan.FromSeconds(3) };
     readonly DispatcherTimer _completedTimer = new() { Interval = TimeSpan.FromSeconds(6) };
 
@@ -82,11 +89,23 @@ public partial class MainWindow : Window
     double _activeSteamFraction;
     bool _activeSteamPaused;
 
+    // ---------- Estado del Temporizador (Fase 8) ----------
+    int _timerTotalSeconds = 15 * 60;
+    double _timerRemainingSeconds = 15 * 60;
+    DateTime _timerEndUtc;
+    bool _timerRunning;
+    bool _timerPaused;
+    bool _timerAlarming;
+    int _alarmFlashTick;
+
+    bool HasTimerActivity => _timerRunning || _timerPaused || _timerAlarming;
+
     // Tamaños de la isla (base 1.0x para pantalla de laptop ~1280 DIPs; escala suavemente en monitores grandes)
-    const double BaseWinW = 480, BaseWinH = 235;
-    const double CompactW = 240, CompactH = 36;
-    const double ExpandedW = 446, MusicH = 190, DownloadH = 132, SummaryH = 132;
+    const double BaseWinW = 550, BaseWinH = 250;
+    const double BaseCompactW = 252, ActiveTimerCompactW = 292, CompactH = 36;
+    const double ExpandedW = 512, MusicH = 190, DownloadH = 132, SummaryH = 132, TimerH = 178;
     double GamesH => _recentGames.Count > 1 ? 196 : 146;
+    double CurrentCompactW => HasTimerActivity ? ActiveTimerCompactW : BaseCompactW;
 
     bool HasDownloadActivity => _activeDownloads > 0 || _showCompleted;
     double ExpandedH => _selectedTab switch
@@ -94,6 +113,7 @@ public partial class MainWindow : Window
         IslandTab.Downloads => DownloadH,
         IslandTab.Summary => SummaryH,
         IslandTab.Games => GamesH,
+        IslandTab.Timer => TimerH,
         _ => MusicH
     };
 
@@ -118,9 +138,12 @@ public partial class MainWindow : Window
         BuildEqualizerStoryboard();
         UpdateClock();
         UpdateBattery();
+        UpdateTimerVisuals();
         RefreshTabVisuals(animate: false);
 
         SystemEvents.PowerModeChanged += OnPowerModeChanged;
+
+        _countdownTimer.Tick += OnCountdownTick;
 
         _mainTimer.Tick += (_, _) =>
         {
@@ -148,7 +171,7 @@ public partial class MainWindow : Window
         _autoCollapseTimer.Tick += (_, _) =>
         {
             _autoCollapseTimer.Stop();
-            if (!Island.IsMouseOver) Animate(false);
+            if (!Island.IsMouseOver && !_timerAlarming) Animate(false);
         };
 
         _completedTimer.Tick += (_, _) =>
@@ -165,7 +188,7 @@ public partial class MainWindow : Window
             RefreshCompactIndicators();
             if (_selectedTab == IslandTab.Downloads && _isPlaying)
                 SelectTab(IslandTab.Music, animate: _expanded);
-            if (!Island.IsMouseOver) Animate(false);
+            if (!Island.IsMouseOver && !_timerAlarming) Animate(false);
         };
 
         _downloads.Changed += u => Dispatcher.Invoke(() => OnDownload(u));
@@ -183,7 +206,6 @@ public partial class MainWindow : Window
 
     // Red de seguridad: mientras hay una descarga activa el servicio informa cada ~0,5 s. Si pasan >4 s sin
     // ningún aviso (y no se está mostrando un "completa"), la descarga ya terminó sin que llegara el aviso
-    // (típico en descargas muy rápidas): se limpia el estado para no quedarse en "0 KB / X KB (0%)".
     void CheckStaleDownload()
     {
         if (_activeDownloads <= 0 || _showCompleted) return;
@@ -208,7 +230,7 @@ public partial class MainWindow : Window
 
         if (_selectedTab == IslandTab.Downloads)
             SelectTab(_isPlaying ? IslandTab.Music : IslandTab.Summary, animate: _expanded);
-        if (!Island.IsMouseOver) Animate(false);
+        if (!Island.IsMouseOver && !_timerAlarming) Animate(false);
     }
 
     static void TrimWorkingSet()
@@ -223,21 +245,22 @@ public partial class MainWindow : Window
         if (ClockText.Text != now)
         {
             ClockText.Text = now;
-            ExpandedClockText.Text = DateTime.Now.ToString("HH:mm  ·  ddd d MMM");
+            ExpandedClockText.Text = DateTime.Now.ToString("HH:mm · ddd d MMM");
         }
     }
 
     void BuildEqualizerStoryboard()
     {
         var sb = new Storyboard { RepeatBehavior = RepeatBehavior.Forever };
+        Timeline.SetDesiredFrameRate(sb, 60);
         AddBarAnim(sb, EqBar1, 4, 13, 320, 0);
         AddBarAnim(sb, EqBar2, 12, 4, 280, 90);
         AddBarAnim(sb, EqBar3, 5, 14, 360, 40);
         AddBarAnim(sb, EqBar4, 11, 5, 300, 130);
         _eqStoryboard = sb;
 
-        // Barras del panel de música (más grandes), solo se animan con la isla abierta en la pestaña Música
         var xs = new Storyboard { RepeatBehavior = RepeatBehavior.Forever };
+        Timeline.SetDesiredFrameRate(xs, 60);
         AddBarAnim(xs, XEqBar1, 5, 16, 320, 0);
         AddBarAnim(xs, XEqBar2, 15, 5, 280, 90);
         AddBarAnim(xs, XEqBar3, 6, 17, 360, 40);
@@ -276,7 +299,6 @@ public partial class MainWindow : Window
         if (_eqStoryboard == null) return;
         CompactMusicIndicator.Visibility = showIcon ? Visibility.Visible : Visibility.Collapsed;
 
-        // Solo animar las barras cuando la isla está en modo compacto y visible
         bool shouldAnimate = showIcon && !_expanded && !_hiddenByFullscreen;
         if (shouldAnimate == _eqRunning) return;
         _eqRunning = shouldAnimate;
@@ -290,9 +312,6 @@ public partial class MainWindow : Window
     {
         _currentDlFraction = Math.Clamp(fraction, 0.0, 1.0);
 
-        // Circunferencia en unidades de StrokeThickness:
-        // CompactDlRing: (20 - 2.4) * pi / 2.4 ≈ 23.04
-        // ExpandedDlRing: (52 - 3.5) * pi / 3.5 ≈ 43.53
         const double compactTotal = 23.04;
         const double expandedTotal = 43.53;
 
@@ -303,11 +322,53 @@ public partial class MainWindow : Window
         ExpandedDlRing.StrokeDashArray = new DoubleCollection { eDash, 100 };
     }
 
-    void RefreshCompactIndicators()
+    static DoubleAnimation CreateFluidAnim(double to, double ms, IEasingFunction? ease = null, double beginMs = 0)
     {
-        CompactDlIndicator.Visibility = HasDownloadActivity ? Visibility.Visible : Visibility.Collapsed;
+        var anim = new DoubleAnimation(to, TimeSpan.FromMilliseconds(ms))
+        {
+            EasingFunction = ease,
+            BeginTime = TimeSpan.FromMilliseconds(beginMs)
+        };
+        Timeline.SetDesiredFrameRate(anim, 120);
+        return anim;
+    }
+
+    static DoubleAnimation CreateFluidAnimFromTo(double from, double to, double ms, IEasingFunction? ease = null)
+    {
+        var anim = new DoubleAnimation(from, to, TimeSpan.FromMilliseconds(ms))
+        {
+            EasingFunction = ease
+        };
+        Timeline.SetDesiredFrameRate(anim, 120);
+        return anim;
+    }
+
+    void RefreshCompactIndicators(bool animateCompactWidth = true)
+    {
+        bool hasDl = HasDownloadActivity;
+        bool hasTimer = HasTimerActivity;
+        bool bothLeft = hasDl && hasTimer;
+
+        CompactDlIndicator.Visibility = hasDl ? Visibility.Visible : Visibility.Collapsed;
+        CompactTimerIndicator.Visibility = hasTimer ? Visibility.Visible : Visibility.Collapsed;
+
+        // se oculta el icono
+        CompactTimerIcon.Visibility = bothLeft ? Visibility.Collapsed : Visibility.Visible;
+        CompactTimerRingHost.Visibility = bothLeft ? Visibility.Collapsed : Visibility.Visible;
+
+        // Columnas izquierda y derecha idénticas para que la hora central jamás se mueva del centro
+        double sideColW = hasTimer ? 110 : 94;
+        CompactColLeft.Width = new GridLength(sideColW);
+        CompactColRight.Width = new GridLength(sideColW);
+
         SetEqualizerRunning(_isPlaying);
         UpdateExpandedEq();
+
+        if (!_expanded && animateCompactWidth && Math.Abs(Island.ActualWidth - CurrentCompactW) > 0.5)
+        {
+            var ease = new QuarticEase { EasingMode = EasingMode.EaseOut };
+            Island.BeginAnimation(WidthProperty, CreateFluidAnim(CurrentCompactW, 220, ease));
+        }
     }
 
     // ---------- Selección de pestaña (Click en iconos o pestañas) ----------
@@ -329,10 +390,13 @@ public partial class MainWindow : Window
         bool isMusic = _selectedTab == IslandTab.Music;
         bool isDl = _selectedTab == IslandTab.Downloads;
         bool isGames = _selectedTab == IslandTab.Games;
+        bool isTimer = _selectedTab == IslandTab.Timer;
+
         SummaryPanel.Visibility = isSummary ? Visibility.Visible : Visibility.Collapsed;
         MusicPanel.Visibility = isMusic ? Visibility.Visible : Visibility.Collapsed;
         DownloadPanel.Visibility = isDl ? Visibility.Visible : Visibility.Collapsed;
         GamesPanel.Visibility = isGames ? Visibility.Visible : Visibility.Collapsed;
+        TimerPanel.Visibility = isTimer ? Visibility.Visible : Visibility.Collapsed;
 
         TabSummaryBtn.Background = isSummary ? s_activeTabBg : s_idleTabBg;
         TabSummaryBtn.Foreground = isSummary ? Brushes.White : s_idleTabFg;
@@ -342,15 +406,18 @@ public partial class MainWindow : Window
         TabDlBtn.Foreground = isDl ? Brushes.White : s_idleTabFg;
         TabGamesBtn.Background = isGames ? s_activeTabBg : s_idleTabBg;
         TabGamesBtn.Foreground = isGames ? Brushes.White : s_idleTabFg;
+
+        TabTimerBtn.Background = isTimer ? s_amberDarkBgBrush : s_idleTabBg;
+        TabTimerBtn.BorderBrush = isTimer ? s_amberBrush : s_defaultBorderBrush;
+        TabTimerBtn.Foreground = isTimer ? Brushes.White : s_idleTabFg;
+
         UpdateExpandedEq();
 
         if (animate)
         {
-            ContentHost.Opacity = 0;
-            ContentSlide.Y = 6;
-            var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
-            ContentHost.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(220)) { EasingFunction = ease });
-            ContentSlide.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(6, 0, TimeSpan.FromMilliseconds(240)) { EasingFunction = ease });
+            var ease = new QuarticEase { EasingMode = EasingMode.EaseOut };
+            ContentHost.BeginAnimation(OpacityProperty, CreateFluidAnimFromTo(0.15, 1.0, 190, ease));
+            ContentSlide.BeginAnimation(TranslateTransform.YProperty, CreateFluidAnimFromTo(4.5, 0.0, 210, ease));
         }
 
         if (_expanded) Animate(true);
@@ -359,33 +426,42 @@ public partial class MainWindow : Window
     void CompactDl_Click(object sender, MouseButtonEventArgs e)
     {
         e.Handled = true;
-        SelectTab(IslandTab.Downloads, animate: true);
+        SelectTab(IslandTab.Downloads, animate: _expanded);
+        Animate(true);
+    }
+
+    void CompactTimer_Click(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true;
+        SelectTab(IslandTab.Timer, animate: _expanded);
         Animate(true);
     }
 
     void CompactMusic_Click(object sender, MouseButtonEventArgs e)
     {
         e.Handled = true;
-        SelectTab(IslandTab.Music, animate: true);
+        SelectTab(IslandTab.Music, animate: _expanded);
         Animate(true);
     }
 
     void Clock_Click(object sender, MouseButtonEventArgs e)
     {
         e.Handled = true;
-        if (HasDownloadActivity && !_isPlaying)
-            SelectTab(IslandTab.Downloads, animate: true);
+        if (_timerAlarming || (HasTimerActivity && !_isPlaying && !HasDownloadActivity))
+            SelectTab(IslandTab.Timer, animate: _expanded);
+        else if (HasDownloadActivity && !_isPlaying)
+            SelectTab(IslandTab.Downloads, animate: _expanded);
         else if (_isPlaying)
-            SelectTab(IslandTab.Music, animate: true);
+            SelectTab(IslandTab.Music, animate: _expanded);
         else
-            SelectTab(IslandTab.Summary, animate: true);
+            SelectTab(IslandTab.Summary, animate: _expanded);
         Animate(true);
     }
 
     void CompactBattery_Click(object sender, MouseButtonEventArgs e)
     {
         e.Handled = true;
-        SelectTab(IslandTab.Summary, animate: true);
+        SelectTab(IslandTab.Summary, animate: _expanded);
         Animate(true);
     }
 
@@ -393,6 +469,264 @@ public partial class MainWindow : Window
     void TabMusic_Click(object sender, RoutedEventArgs e) => SelectTab(IslandTab.Music, animate: true);
     void TabDl_Click(object sender, RoutedEventArgs e) => SelectTab(IslandTab.Downloads, animate: true);
     void TabGames_Click(object sender, RoutedEventArgs e) => SelectTab(IslandTab.Games, animate: true);
+    void TabTimer_Click(object sender, RoutedEventArgs e) => SelectTab(IslandTab.Timer, animate: true);
+
+    // ---------- Temporizador inmersivo (Fase 8) ----------
+    void OnCountdownTick(object? sender, EventArgs e)
+    {
+        if (_timerAlarming)
+        {
+            _alarmFlashTick++;
+            bool flash = (_alarmFlashTick % 2) == 0;
+            IslandBorderStop0.Color = flash ? Color.FromRgb(0xFF, 0x9F, 0x0A) : Color.FromRgb(0x1F, 0x1F, 0x24);
+            IslandBorderStop1.Color = flash ? Color.FromRgb(0xFF, 0x6B, 0x00) : Color.FromRgb(0x2E, 0x2E, 0x36);
+            ExpandedTimerRing.Stroke = flash ? s_amberBrush : s_redBrush;
+
+            if (_alarmFlashTick % 10 == 0)
+            {
+                try { SystemSounds.Exclamation.Play(); } catch { }
+            }
+            return;
+        }
+
+        if (!_timerRunning) return;
+
+        double rem = (_timerEndUtc - DateTime.UtcNow).TotalSeconds;
+        if (rem <= 0)
+        {
+            _timerRemainingSeconds = 0;
+            _timerRunning = false;
+            _timerPaused = false;
+            _timerAlarming = true;
+            _alarmFlashTick = 0;
+            CompactTimerScale.ScaleX = 1.0;
+            CompactTimerScale.ScaleY = 1.0;
+
+            UpdateTimerVisuals();
+            RefreshCompactIndicators();
+
+            try { SystemSounds.Exclamation.Play(); } catch { }
+
+            SelectTab(IslandTab.Timer, animate: false);
+            _autoCollapseTimer.Stop();
+            Animate(true);
+            return;
+        }
+
+        _timerRemainingSeconds = rem;
+        UpdateTimerVisuals();
+
+        // Latido suave en reposo cuando quedan ≤ 10 segundos
+        if (rem <= 10 && !_expanded)
+        {
+            double pulse = 1.0 + 0.05 * Math.Abs(Math.Sin(rem * Math.PI));
+            CompactTimerScale.ScaleX = pulse;
+            CompactTimerScale.ScaleY = pulse;
+        }
+        else
+        {
+            CompactTimerScale.ScaleX = 1.0;
+            CompactTimerScale.ScaleY = 1.0;
+        }
+    }
+
+    void UpdateTimerVisuals()
+    {
+        int dispSec = (int)Math.Ceiling(Math.Max(0, _timerRemainingSeconds));
+        int mins = dispSec / 60;
+        int secs = dispSec % 60;
+        string formatted = $"{mins:00}:{secs:00}";
+
+        TimerBigMinText.Text = mins.ToString("00");
+        TimerBigSecText.Text = secs.ToString("00");
+        CompactTimerText.Text = formatted;
+        TimerRingTimeText.Text = formatted;
+
+        double frac = _timerTotalSeconds > 0
+            ? Math.Clamp(_timerRemainingSeconds / _timerTotalSeconds, 0.0, 1.0)
+            : 0.0;
+
+        // Circunferencia en unidades de StrokeThickness:
+        // CompactTimerRing: (14 - 2) * pi / 2 ≈ 18.85
+        // ExpandedTimerRing: (80 - 5) * pi / 5 ≈ 47.12
+        const double compactCirc = 18.85;
+        const double expandedCirc = 47.12;
+
+        CompactTimerRing.StrokeDashArray = new DoubleCollection { compactCirc * frac, 100 };
+        ExpandedTimerRing.StrokeDashArray = new DoubleCollection { expandedCirc * (_timerAlarming ? 1.0 : frac), 100 };
+
+        if (_timerAlarming)
+        {
+            TimerRingStateText.Text = "¡TERMINADO!";
+            TimerRingStateText.Foreground = s_redBrush;
+            TimerPrimaryBtnText.Text = "↻ Repetir";
+            TimerResetBtn.Visibility = Visibility.Visible;
+        }
+        else if (_timerRunning)
+        {
+            TimerRingStateText.Text = "ACTIVO";
+            TimerRingStateText.Foreground = s_amberBrush;
+            ExpandedTimerRing.Stroke = s_amberBrush;
+            TimerPrimaryBtnText.Text = "⏸ Pausar";
+            TimerResetBtn.Visibility = Visibility.Visible;
+        }
+        else if (_timerPaused)
+        {
+            TimerRingStateText.Text = "EN PAUSA";
+            TimerRingStateText.Foreground = s_grayBrush;
+            ExpandedTimerRing.Stroke = s_amberBrush;
+            TimerPrimaryBtnText.Text = "▶ Reanudar";
+            TimerResetBtn.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            TimerRingStateText.Text = "LISTO";
+            TimerRingStateText.Foreground = s_amberBrush;
+            ExpandedTimerRing.Stroke = s_amberBrush;
+            TimerPrimaryBtnText.Text = "▶ Iniciar";
+            TimerResetBtn.Visibility = Visibility.Collapsed;
+        }
+
+        HighlightMatchingPreset();
+    }
+
+    void HighlightMatchingPreset()
+    {
+        bool idle = !_timerRunning && !_timerPaused && !_timerAlarming;
+        int activePresetMin = idle && (_timerTotalSeconds % 60 == 0) ? _timerTotalSeconds / 60 : -1;
+
+        var buttons = new (Button Btn, int Min)[]
+        {
+            (Preset3Btn, 3),
+            (Preset5Btn, 5),
+            (Preset10Btn, 10),
+            (Preset15Btn, 15),
+            (Preset30Btn, 30)
+        };
+
+        foreach (var (btn, m) in buttons)
+        {
+            bool sel = m == activePresetMin;
+            btn.Background = sel ? s_amberDarkBgBrush : s_presetIdleBg;
+            btn.BorderBrush = sel ? s_amberBrush : s_presetIdleBorder;
+            btn.Foreground = sel ? Brushes.White : s_whiteBrush;
+        }
+    }
+
+    void StopAlarmGlow()
+    {
+        _timerAlarming = false;
+        CompactTimerScale.ScaleX = 1.0;
+        CompactTimerScale.ScaleY = 1.0;
+        IslandBorderStop0.Color = Color.FromRgb(0x1F, 0x1F, 0x24);
+        IslandBorderStop1.Color = Color.FromRgb(0x2E, 0x2E, 0x36);
+    }
+
+    void AdjustTimerSeconds(int deltaSeconds)
+    {
+        StopAlarmGlow();
+        int baseSec = (_timerRunning || _timerPaused)
+            ? (int)Math.Ceiling(_timerRemainingSeconds)
+            : _timerTotalSeconds;
+
+        int next = Math.Clamp(baseSec + deltaSeconds, 15, 99 * 60 + 45);
+        _timerTotalSeconds = next;
+        _timerRemainingSeconds = next;
+
+        if (_timerRunning)
+            _timerEndUtc = DateTime.UtcNow.AddSeconds(next);
+
+        UpdateTimerVisuals();
+        RefreshCompactIndicators();
+    }
+
+    void TimerMin_MouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        e.Handled = true;
+        AdjustTimerSeconds(e.Delta > 0 ? 60 : -60);
+    }
+
+    void TimerSec_MouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        e.Handled = true;
+        AdjustTimerSeconds(e.Delta > 0 ? 15 : -15);
+    }
+
+    void TimerPanel_MouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (e.Handled) return;
+        e.Handled = true;
+        AdjustTimerSeconds(e.Delta > 0 ? 60 : -60);
+    }
+
+    void TimerMinUp_Click(object sender, RoutedEventArgs e) => AdjustTimerSeconds(60);
+    void TimerMinDown_Click(object sender, RoutedEventArgs e) => AdjustTimerSeconds(-60);
+    void TimerSecUp_Click(object sender, RoutedEventArgs e) => AdjustTimerSeconds(15);
+    void TimerSecDown_Click(object sender, RoutedEventArgs e) => AdjustTimerSeconds(-15);
+
+    void TimerPreset_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button btn || !int.TryParse(btn.Tag?.ToString(), out int mins)) return;
+
+        StopAlarmGlow();
+        _timerRunning = false;
+        _timerPaused = false;
+        _countdownTimer.Stop();
+
+        _timerTotalSeconds = mins * 60;
+        _timerRemainingSeconds = _timerTotalSeconds;
+        UpdateTimerVisuals();
+        RefreshCompactIndicators();
+    }
+
+    void TimerPrimary_Click(object sender, RoutedEventArgs e)
+    {
+        if (_timerAlarming)
+        {
+            StopAlarmGlow();
+            _timerRemainingSeconds = _timerTotalSeconds;
+            _timerEndUtc = DateTime.UtcNow.AddSeconds(_timerRemainingSeconds);
+            _timerRunning = true;
+            _timerPaused = false;
+            _countdownTimer.Start();
+            UpdateTimerVisuals();
+            RefreshCompactIndicators();
+            return;
+        }
+
+        if (_timerRunning)
+        {
+            // Pausar
+            _timerRemainingSeconds = Math.Max(0, (_timerEndUtc - DateTime.UtcNow).TotalSeconds);
+            _timerRunning = false;
+            _timerPaused = true;
+            _countdownTimer.Stop();
+        }
+        else
+        {
+            // Iniciar o Reanudar
+            if (_timerRemainingSeconds <= 0)
+                _timerRemainingSeconds = _timerTotalSeconds;
+            _timerEndUtc = DateTime.UtcNow.AddSeconds(_timerRemainingSeconds);
+            _timerRunning = true;
+            _timerPaused = false;
+            _countdownTimer.Start();
+        }
+
+        UpdateTimerVisuals();
+        RefreshCompactIndicators();
+    }
+
+    void TimerReset_Click(object sender, RoutedEventArgs e)
+    {
+        StopAlarmGlow();
+        _timerRunning = false;
+        _timerPaused = false;
+        _countdownTimer.Stop();
+        _timerRemainingSeconds = _timerTotalSeconds;
+        UpdateTimerVisuals();
+        RefreshCompactIndicators();
+    }
 
     // ---------- Juegos recientes (Fase 7) ----------
     void ApplyGames(IReadOnlyList<GameEntry> games)
@@ -532,7 +866,7 @@ public partial class MainWindow : Window
         }
 
         var key = (hasBattery, pct, charging, plugged, remainMin);
-        if (_lastBattery == key) return; // Sin cambios: no tocar la interfaz
+        if (_lastBattery == key) return;
         _lastBattery = key;
 
         CompactBatteryIndicator.Visibility = hasBattery ? Visibility.Visible : Visibility.Collapsed;
@@ -547,7 +881,6 @@ public partial class MainWindow : Window
             return;
         }
 
-        // Color: verde cargando, rojo ≤10 %, ámbar ≤20 %, blanco normal
         var brush = charging ? s_greenBrush
                   : pct <= 10 ? s_redBrush
                   : pct <= 20 ? s_amberBrush
@@ -557,7 +890,7 @@ public partial class MainWindow : Window
         CompactBatteryText.Text = pct + "%";
         CompactBatteryText.Foreground = brush;
         CompactBatteryFill.Background = brush;
-        CompactBatteryFill.Width = Math.Max(1.5, 14 * frac);
+        CompactBatteryFill.Width = Math.Max(1.6, 15.6 * frac);
         CompactBatteryIndicator.ToolTip = $"Batería {pct}%" + (charging ? " · cargando" : "");
 
         BatteryRingText.Text = pct.ToString();
@@ -630,10 +963,6 @@ public partial class MainWindow : Window
         else
             scaleX = VisualTreeHelper.GetDpi(this).DpiScaleX;
 
-        // Escalado proporcional moderado según el ancho lógico del monitor:
-        // - En la laptop (~1280–1366 DIPs, ej. 1920x1200 al 150%): uiScale = 1.00 (tamaño actual intacto).
-        // - En un monitor 1080p al 100% (1920 DIPs): uiScale ≈ 1.21 (+21%).
-        // - En un monitor 1440p/2K (2560 DIPs): uiScale ≈ 1.35 (+35%, tope 1.38).
         double logicalScreenW = bounds.Width / scaleX;
         double uiScale = Math.Clamp(1.0 + Math.Max(0, (logicalScreenW - 1320.0) / 1320.0) * 0.45, 1.0, 1.38);
 
@@ -803,6 +1132,7 @@ public partial class MainWindow : Window
     {
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+        _countdownTimer.Stop();
         _downloads.Dispose();
         if (_tray != null) { _tray.Visible = false; _tray.Dispose(); _tray = null; }
         Application.Current.Shutdown();
@@ -821,8 +1151,7 @@ public partial class MainWindow : Window
 
         RefreshCompactIndicators();
 
-        // Al cambiar de canción, seleccionamos la pestaña de música y abrimos 3 s (si no hay descarga activa en pantalla)
-        if (_isPlaying && info.Title != _lastTitle && !HasDownloadActivity)
+        if (_isPlaying && info.Title != _lastTitle && !HasDownloadActivity && !_timerAlarming)
         {
             SelectTab(IslandTab.Music, animate: false);
             ShowTemporarily(3);
@@ -916,7 +1245,7 @@ public partial class MainWindow : Window
                 _lastDlUpdateUtc = DateTime.UtcNow;
                 RefreshCompactIndicators();
 
-                if (wasIdle && !paused)
+                if (wasIdle && !paused && !_timerAlarming)
                 {
                     SelectTab(IslandTab.Downloads, animate: false);
                     ShowTemporarily(2.8);
@@ -980,7 +1309,6 @@ public partial class MainWindow : Window
 
     void DlPauseResume_Click(object s, RoutedEventArgs e) => _downloads.TogglePauseResume();
 
-    // Cancelar descarga: el primer clic arma el botón (la X se pone roja 3 s); el segundo confirma.
     DispatcherTimer? _cancelArmTimer;
     bool _cancelArmed;
 
@@ -1036,64 +1364,71 @@ public partial class MainWindow : Window
     {
         _autoCollapseTimer.Stop();
 
-        // Si el mouse entra por el lado izquierdo y hay descarga, muestra Descargas;
-        // si entra por la derecha y hay música, muestra Música; si no, mantiene la pestaña elegida.
         Point pt = e.GetPosition(Island);
-        if (pt.X < Island.ActualWidth * 0.36 && HasDownloadActivity)
-            SelectTab(IslandTab.Downloads, animate: false);
+        if (_timerAlarming)
+        {
+            SelectTab(IslandTab.Timer, animate: false);
+        }
+        else if (pt.X < Island.ActualWidth * 0.36)
+        {
+            if (HasTimerActivity && !HasDownloadActivity)
+                SelectTab(IslandTab.Timer, animate: false);
+            else if (HasDownloadActivity)
+                SelectTab(IslandTab.Downloads, animate: false);
+        }
         else if (pt.X > Island.ActualWidth * 0.64 && _isPlaying)
+        {
             SelectTab(IslandTab.Music, animate: false);
-        else if (!_isPlaying && !HasDownloadActivity)
-            SelectTab(IslandTab.Summary, animate: false); // Nada activo: mostrar el resumen en vez de "Sin reproducción"
+        }
+        else if (!_isPlaying && !HasDownloadActivity && !HasTimerActivity && _selectedTab == IslandTab.Music)
+        {
+            SelectTab(IslandTab.Summary, animate: false);
+        }
 
         Animate(true);
     }
 
     void Island_MouseLeave(object sender, MouseEventArgs e)
     {
-        if (!_showCompleted) Animate(false);
+        if (!_showCompleted && !_timerAlarming) Animate(false);
     }
 
     void Animate(bool expand)
     {
         if (expand && _hiddenByFullscreen) return;
+        bool stateChanged = _expanded != expand;
         _expanded = expand;
-        RefreshCompactIndicators();
+        RefreshCompactIndicators(animateCompactWidth: false);
         if (expand && _selectedTab == IslandTab.Music) UpdateProgress();
 
-        var sizeEase = expand
-            ? (IEasingFunction)new BackEase { EasingMode = EasingMode.EaseOut, Amplitude = 0.22 }
-            : new CubicEase { EasingMode = EasingMode.EaseInOut };
-        var dur = TimeSpan.FromMilliseconds(expand ? 360 : 280);
+        // Si ya estaba expandida y solo cambió de pestaña (altura), deslizar tamaño suavemente sin reiniciar opacidades
+        if (!stateChanged && expand)
+        {
+            var tabResizeEase = new QuarticEase { EasingMode = EasingMode.EaseOut };
+            Island.BeginAnimation(WidthProperty, CreateFluidAnim(ExpandedW, 220, tabResizeEase));
+            Island.BeginAnimation(HeightProperty, CreateFluidAnim(ExpandedH, 230, tabResizeEase));
+            return;
+        }
 
-        Island.BeginAnimation(WidthProperty,
-            new DoubleAnimation(expand ? ExpandedW : CompactW, dur) { EasingFunction = sizeEase });
-        Island.BeginAnimation(HeightProperty,
-            new DoubleAnimation(expand ? ExpandedH : CompactH, dur) { EasingFunction = sizeEase });
+        var sizeEase = expand
+            ? (IEasingFunction)new BackEase { EasingMode = EasingMode.EaseOut, Amplitude = 0.11 }
+            : new QuarticEase { EasingMode = EasingMode.EaseOut };
+        double durMs = expand ? 310 : 240;
+
+        Island.BeginAnimation(WidthProperty, CreateFluidAnim(expand ? ExpandedW : CurrentCompactW, durMs, sizeEase));
+        Island.BeginAnimation(HeightProperty, CreateFluidAnim(expand ? ExpandedH : CompactH, durMs, sizeEase));
 
         ExpandedPanel.IsHitTestVisible = expand;
         CompactBar.IsHitTestVisible = !expand;
 
-        var fadeEase = new CubicEase { EasingMode = EasingMode.EaseOut };
+        var fadeEase = new QuarticEase { EasingMode = EasingMode.EaseOut };
         ExpandedPanel.BeginAnimation(OpacityProperty,
-            new DoubleAnimation(expand ? 1 : 0, TimeSpan.FromMilliseconds(expand ? 240 : 110))
-            {
-                BeginTime = TimeSpan.FromMilliseconds(expand ? 90 : 0),
-                EasingFunction = fadeEase
-            });
+            CreateFluidAnim(expand ? 1 : 0, expand ? 200 : 95, fadeEase, expand ? 45 : 0));
         ExpandedSlide.BeginAnimation(TranslateTransform.YProperty,
-            new DoubleAnimation(expand ? 0 : -6, TimeSpan.FromMilliseconds(expand ? 280 : 140))
-            {
-                BeginTime = TimeSpan.FromMilliseconds(expand ? 70 : 0),
-                EasingFunction = fadeEase
-            });
+            CreateFluidAnim(expand ? 0 : -5, expand ? 240 : 120, fadeEase, expand ? 35 : 0));
 
         CompactBar.BeginAnimation(OpacityProperty,
-            new DoubleAnimation(expand ? 0 : 1, TimeSpan.FromMilliseconds(expand ? 110 : 220))
-            {
-                BeginTime = TimeSpan.FromMilliseconds(expand ? 0 : 80),
-                EasingFunction = fadeEase
-            });
+            CreateFluidAnim(expand ? 0 : 1, expand ? 85 : 190, fadeEase, expand ? 0 : 60));
     }
 
     // ---------- Botones ----------

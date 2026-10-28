@@ -1,143 +1,75 @@
 # Informe — Isla Dinámica para Windows 11
 
-*Última actualización: 2026-10-27 · Fases 1–5 funcionando y confirmadas · Fase 6 (batería, Resumen, panel de Música rediseñado) y arreglo de descargas rápidas publicados en el `.exe`, pendientes de probar en la laptop · Fase 7 (Lanzador de juegos) en planificación*
+*Última actualización: 2026-10-28 · Fases 1–7 funcionando y confirmadas · Fases 8, 9 y 10 en planificación*
 
 ## Objetivo
-
 Una "isla dinámica" / notch propio en la parte superior de la pantalla de la laptop (Windows 11) que muestre la hora, batería, notificaciones, descargas en tiempo real, multimedia/música y un **lanzador rápido automático para tus últimos juegos**, con diseño y animaciones premium, y que permita interactuar sin minimizar ventanas.
 
 ## Stack
-
 * C# + .NET 8 + WPF (acceso a las APIs de Windows y Win32 Interop). WinForms solo para el icono de bandeja.
-
 * Extensión de navegador (Manifest V3) para Chrome / Edge / Brave / Opera.
-
 * Proyecto en la raíz del repositorio (`IslaDinamica.csproj`).
 
 ## Cómo ejecutarlo
-
 1. Instalar el SDK de .NET 8 (https://dotnet.microsoft.com/download).
-
 2. `dotnet run` en la carpeta del proyecto, o ejecutar `publish\IslaDinamica.exe`.
-
-3. En reposo la isla muestra la **hora** en el centro, el **porcentaje y el icono de batería** y un **ecualizador blanco animado** a la derecha si suena música, y un **anillo de progreso** a la izquierda si hay una descarga activa.
-
-4. Pasar el mouse o hacer clic en un indicador abre su panel (**Resumen**, **Música**, **Descargas** o **Juegos**). Sin música ni descargas activas se abre el Resumen.
-
-5. Clic derecho sobre la isla o en el icono de bandeja → Salir / Cambiar pantalla / Iniciar con Windows.
+3. En reposo la isla muestra la **hora**, **batería**, **ecualizador** y **anillo de progreso** de descargas.
+4. Pasar el mouse o hacer clic en un indicador abre su panel (**Resumen**, **Música**, **Descargas** o **Juegos**).
+5. Clic derecho sobre la isla o bandeja → Salir / Cambiar pantalla / Iniciar con Windows.
 
 ## Publicar el .exe (uso diario)
-
-```
+```powershell
 dotnet publish -c Release -r win-x64 --self-contained false -o publish
-
 ```
-
-Ejecutar `publish\IslaDinamica.exe` y, desde el icono de bandeja, marcar "Iniciar con Windows" (hacerlo desde el `.exe` publicado, no desde `dotnet run`).
-
-## Instalar la extensión del navegador (para pausar / cancelar descargas de Chrome, Edge, etc.)
-
-1. Guardar la carpeta de la extensión (`ExtensiónChromeIsla`: `manifest.json` + `background.js`) en un lugar fijo y no moverla.
-
-2. Chrome: `chrome://extensions` → activar **Modo de desarrollador** → **Cargar descomprimida** → elegir la carpeta. (Edge: `edge://extensions`.)
-
-3. Tras **cualquier cambio** en `background.js` o `manifest.json`, pulsar el icono de **recargar** de la extensión; Chrome no la recarga solo. La versión actual es **1.1**.
-
-4. Chrome en Windows puede mostrar un aviso al iniciar por ser una extensión en modo desarrollador; es normal.
 
 ## Estructura
-
-| Archivo | Función | 
-| ----- | ----- | 
-| `IslaDinamica.csproj` | Config (`net8.0-windows10.0.19041.0`, WPF + WinForms, `PerMonitorV2`) | 
-| `App.xaml / App.xaml.cs` | Arranque e instancia única (`Mutex`) | 
-| `MainWindow.xaml` | Diseño negro premium (`#050507`): vista compacta (reloj + anillo + batería + ecualizador) y expandida con pestañas Resumen / Música / Descargas / Juegos | 
-| `MainWindow.xaml.cs` | Animaciones, pestañas, batería (`PowerStatus`), multi-monitor DPI, ocultación en pantalla completa, fuera de `Alt+Tab`, cancelar con doble clic | 
-| `DownloadService.cs` | Descargas: vigilancia de `Downloads`, Steam (`.acf` + `content_log.txt`), integración con la extensión | 
-| `BrowserBridge.cs` | Servidor local (`127.0.0.1:47831`) con el que habla la extensión para estado de descargas. | 
-| `StartupManager.cs` | Inicio con Windows (`HKCU\...\Run`) | 
-| `MediaService.cs` | Música vía SMTC, con caché, portada a 136 px y posición/duración de la canción | 
-| `GameLauncherService.cs` | Detección automática de juegos instalados en Steam (`appmanifest_*.acf`) cruzada con `LastPlayed` en `localconfig.vdf`, más carga/caché de carátulas desde `appcache\librarycache` o CDN | 
+| Archivo | Función |
+|---|---|
+| `IslaDinamica.csproj` | Configuración WPF + WinForms, `PerMonitorV2` |
+| `MainWindow.xaml` / `.cs` | Diseño negro premium, animaciones, multi-monitor, ocultación en pantalla completa, pestañas |
+| `DownloadService.cs` | Descargas: vigilancia de `Downloads`, Steam, Epic, Riot, integración con extensión |
+| `BrowserBridge.cs` | Servidor local para extensión de Chrome/Edge |
+| `MediaService.cs` | Música vía SMTC, portadas, controles |
+| `GameLauncherService.cs`| Detección automática de juegos (Steam, Epic, Riot) y carátulas |
 
 ## Estado por fases
 
-### Fase 1 — Base y multimedia (COMPLETADA)
+### Fases 1 a 6 (COMPLETADAS Y PUBLICADAS)
+* **Base, Multimedia y Diseño:** Ventana transparente, sin bordes, siempre encima. Reloj, ecualizador, barra de progreso. Multi-monitor.
+* **Descargas:** Detección de descargas en Chrome/Edge (con pausa y cancelación real vía extensión), Steam (con porcentaje y velocidad). Arreglo de descargas rápidas.
+* **Batería y Resumen:** Porcentaje e icono en reposo. Panel con tiempo restante y anillo de estado.
+* **Optimización:** Consumo de CPU/RAM optimizado (reposo real, caché de portadas).
 
-* \[x\] Ventana transparente, sin bordes, siempre encima, centrada arriba, sin icono en la barra de tareas.
+### Fase 7 — Lanzador rápido de juegos (COMPLETADA Y PUBLICADA)
+* Detección automática de últimos juegos jugados en **Steam, Epic Games y Riot Games**.
+* Pestaña "Juegos" con carátula destacada, plataforma (colores) y botón "Jugar".
+* Top 3 recientes e integración de descargas/actualizaciones en vivo de los launchers.
 
-* \[x\] Isla compacta que se expande al pasar el mouse o hacer clic, con animación elástica.
+### Fase 8 — Temporizador inmersivo (EN PLANIFICACIÓN)
+* **Reposo (Compacto):** Diseño ultra-minimalista. Se oculta la fecha/día para mayor limpieza. El reloj principal se muestra más grande y centrado, la batería (icono + porcentaje) ampliada a la derecha, y el temporizador activo (icono + tiempo + anillo naranja) a la izquierda.
+* **Panel Abierto (⏱ Temp.):** Conserva la fecha (`12:14 · mié 28 oct.`) en la esquina superior izquierda. En el centro, números grandes (`15:00`) ajustables con la rueda del ratón y fila de presets rápidos (`3m`, `5m`, `10m`, `15m`, `30m`). A la derecha, anillo de progreso dinámico naranja con botón de `[ Iniciar ]`.
+* **Alarma:** Expansión automática de la isla con un resplandor (glow) naranja intermitente en el borde interior al terminar el tiempo.
 
-* \[x\] Música: portada, título, artista, anterior / play-pausa / siguiente.
+### Fase 9 — Centro de Control (Wi-Fi, Brillo, Bluetooth) (EN PLANIFICACIÓN)
+* **Red:** Lectura de SSID (Wi-Fi) y señal.
+* **Brillo:** Slider integrado para ajustar el brillo de la pantalla mediante APIs WMI.
+* **Bluetooth:** Estado de conexión de dispositivos (ej. auriculares y porcentaje de batería).
 
-### Fase 2 — Pulido y diseño premium (COMPLETADA)
-
-* \[x\] Reposo tipo Dynamic Island: reloj, ecualizador animado y anillo de descarga (verde; ámbar en pausa).
-
-* \[x\] Controles vectoriales, pestañas, acabado negro sin sombras cuadradas.
-
-* \[x\] La isla se abre sola 3 s al cambiar de canción; barra de progreso de la canción.
-
-* \[x\] Multi-monitor con DPI (`PerMonitorV2`), submenú "Pantalla" en la bandeja.
-
-* \[x\] Se oculta con apps/juegos a pantalla completa; no aparece en `Alt+Tab`.
-
-* \[x\] Icono de bandeja, inicio con Windows, instancia única.
-
-### Fase 3 — Descargas en tiempo real (COMPLETADA)
-
-* \[x\] `FileSystemWatcher` sobre `Downloads`.
-
-* \[x\] Avisos "Descarga completa" 6 s con botón "Abrir ubicación".
-
-* \[x\] **Steam:** localiza Steam en el registro, lee bibliotecas, nombre del juego, porcentaje, velocidad.
-
-* \[x\] Pausa/continuar y **cancelar** en Steam.
-
-### Fase 4 — Optimización de RAM y CPU (COMPLETADA)
-
-* \[x\] Portadas decodificadas a 136 px y cacheadas por canción.
-
-* \[x\] Temporizador de progreso de música solo con la isla expandida.
-
-* \[x\] **Reposo real en `DownloadService`**: sin descargas activas no se lee la red ni se relee ningún `.acf`.
-
-### Fase 5 — Extensión del navegador: pausa y cancelar reales (COMPLETADA)
-
-* \[x\] Conexión vía servidor local (`127.0.0.1:47831`) para evitar suspender procesos de red.
-
-* \[x\] Pausar, reanudar y cancelar descargas nativamente en el navegador.
-
-### Fase 6 — Batería, Resumen y Música rediseñada (PUBLICADA)
-
-* \[x\] **Reposo:** porcentaje + icono de batería a la derecha.
-
-* \[x\] **Panel "Resumen"**: anillo con el %, estado y tiempo restante.
-
-* \[x\] **Panel de Música rediseñado**: carátula de 48 px, barras animadas, controles centrados.
-
-* \[x\] **Arreglo de descargas rápidas:** ignorar IDs ya terminados.
-
-### Fase 7 — Lanzador rápido de juegos (IMPLEMENTADA Y PUBLICADA)
-
-**Objetivo:** Una nueva sección dentro del notch para acceder rápidamente a los últimos juegos sin abrir launchers completos, mediante detección 100% automática.
-
-* \[x\] **Detección automática multi-launcher (`GameLauncherService.cs`):**
-    * **Steam:** bibliotecas (`libraryfolders.vdf` + `appmanifest_*.acf`) cruzadas con `LastPlayed` en `userdata\*\config\localconfig.vdf` y carátulas de `appcache\librarycache` o CDN.
-    * **Epic Games:** manifiestos `C:\ProgramData\Epic\EpicGamesLauncher\Data\Manifests\*.item`, lectura de última sesión (logs/ejecutables + historial propio en `%LocalAppData%\IslaDinamica\game_history.json`), imágenes Splash o icono nativo del `.exe`, y lanzamiento silencioso `com.epicgames.launcher://apps/...`.
-    * **Riot Games (League of Legends, VALORANT, LoR, 2XKO):** detección vía `C:\ProgramData\Riot Games\Metadata\*.live` (`product_settings.yaml`) y `RiotClientInstalls.json`, lectura de última partida en `%LocalAppData%\VALORANT\Saved\Logs\ShooterGame.log` y `<LoL>\Logs\LeagueClient Logs`, y lanzamiento directo con `RiotClientServices.exe --launch-product=<juego> --launch-patchline=live`.
-* \[x\] **Nueva pestaña "Juegos":** Integrada en la interfaz expandida junto a Resumen, Música y Descargas, con escalado proporcional automático por pantalla (`PositionOnScreen`).
-* \[x\] **Último juego destacado:** Muestra la carátula/icono, insignia con color por plataforma (**Steam** morado `#A78BFA`, **Epic** azul `#38BDF8`, **Riot** rojo `#FF4655`), título, hace cuánto se jugó y botón **"Jugar ▶"**.
-* \[x\] **Lista de recientes (Top 3 siguientes):** Fila inferior de 3 tarjetas compactas con miniatura, nombre y lanzamiento en un clic.
-* \[x\] **Descargas e integración en vivo para Steam, Epic y Riot (`DownloadService.cs`):** Detecta descargas/actualizaciones en curso de Steam (`.acf`), Epic (`*.item` con `bIsIncompleteInstall: true` o `Pending`) y Riot (`Metadata\*.live` con `.lock` o sin `.ok` mientras `RiotClientServices` descarga), mostrándolas tanto en la pestaña **Descargas** como sobre la tarjeta del juego destacado.
+### Fase 10 — Dropzone / Gestor de Archivos Inteligente (EN PLANIFICACIÓN)
+* **Drag & Drop Inteligente:** Permite arrastrar cualquier archivo desde el Explorador hacia el notch.
+* **Expansión al Vuelo:** Al detectar el cursor con un archivo (`DragEnter`), la isla se expande automáticamente (con rebote elástico) revelando el panel "Dropzone".
+* **Acciones Rápidas (Tiles):** Diferentes áreas o "cuadrados" donde soltar el archivo para realizar acciones inmediatas:
+  * 🗑️ Enviar a la Papelera de reciclaje (con animación de borde rojo y tapa abriéndose al hacer hover).
+  * 📁 Mover a rutas favoritas preconfiguradas (Documentos, Escritorio, etc.).
+  * ☁️ Guardar en la nube o atajos personalizados (`+`).
+* **Efecto de Absorción:** Destello visual y un check verde rápido (✓) al soltar el archivo, seguido del cierre automático del notch.
 
 ## Pendiente
-
-* \[ \] **`.tmp` en Descargas:** archivos `.tmp` de otras apps pueden dar falsos "Descargando".
-* \[ \] Publicar la extensión en la Chrome Web Store.
-* \[ \] Soporte de Firefox (API `browser.downloads`, extensión aparte).
-* \[ \] **Notificaciones de Windows:** `UserNotificationListener`.
+* [ ] **`.tmp` en Descargas:** archivos `.tmp` de otras apps pueden dar falsos "Descargando".
+* [ ] Publicar la extensión en la Chrome Web Store y crear soporte para Firefox.
+* [ ] **Notificaciones de Windows:** `UserNotificationListener`.
 
 ### Ideas priorizadas (siguiente paso sugerido)
-
-1. Probar lo publicado (batería, Música, descargas rápidas).
-2. Comenzar la **Fase 7 (Lanzador de juegos)**: Hacer una pequeña prueba de concepto en consola para leer el `localconfig.vdf` de Steam e imprimir el último juego jugado.
+1. Iniciar la **Fase 8 (Temporizador inmersivo)** estructurando la UI (reloj centrado, batería rediseñada y la nueva pestaña) en `MainWindow.xaml`.
+2. Programar la lógica del contador en un nuevo `TimerService.cs`.
+3. Probar los eventos *Drag and Drop* básicos para la **Fase 10 (Dropzone)**.
