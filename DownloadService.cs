@@ -1077,6 +1077,12 @@ public class DownloadService : IDisposable
 
                     if (!epicRunning) continue;
 
+                    // Evitar falsos positivos por manifiestos antiguos de instalaciones canceladas hace días
+                    bool alreadyTracked;
+                    lock (_lock) alreadyTracked = _steamTrackers.ContainsKey(key);
+                    if (!alreadyTracked && (DateTime.UtcNow - File.GetLastWriteTimeUtc(file)).TotalMinutes > 10)
+                        continue;
+
                     long totalSize = root.TryGetProperty("InstallSize", out var isz) && isz.TryGetInt64(out long sz) ? sz : 0;
                     string installLoc = root.TryGetProperty("InstallLocation", out var il) ? (il.GetString() ?? "") : "";
 
@@ -1158,15 +1164,19 @@ public class DownloadService : IDisposable
                 bool hasOk = File.Exists(okFile);
                 bool hasLock = File.Exists(lockFile);
 
-                if (hasOk && !hasLock)
+                // IMPORTANTE: La mera ausencia de .ok significa que el juego NO está instalado (ej. botón "Instalar").
+                // Riot solo está descargando/actualizando cuando existe explícitamente el archivo .live.lock
+                // y fue creado/modificado recientemente mientras RiotClientServices está activo.
+                if (!hasLock)
                 {
-                    completedIds.Add(id);
+                    if (hasOk) completedIds.Add(id);
                     continue;
                 }
 
                 if (!riotRunning) continue;
+                if ((DateTime.UtcNow - File.GetLastWriteTimeUtc(lockFile)).TotalMinutes > 10)
+                    continue;
 
-                // Está actualizando si existe .lock o falta .ok mientras RiotClientServices está activo
                 activeIds.Add(id);
                 lock (_lock)
                 {

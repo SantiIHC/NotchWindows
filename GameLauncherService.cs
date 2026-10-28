@@ -120,10 +120,12 @@ public sealed class GameLauncherService
         try
         {
             RecordPlayedNow(game.Id);
+            bool isLocalExe = File.Exists(game.LaunchUri);
             var psi = new ProcessStartInfo(game.LaunchUri)
             {
-                UseShellExecute = true,
-                Arguments = game.LaunchArgs ?? ""
+                UseShellExecute = !isLocalExe,
+                Arguments = game.LaunchArgs ?? "",
+                WorkingDirectory = isLocalExe ? (Path.GetDirectoryName(game.LaunchUri) ?? "") : ""
             };
             Process.Start(psi);
             _ = RefreshAsync(4);
@@ -132,7 +134,14 @@ public sealed class GameLauncherService
         {
             if (!string.IsNullOrEmpty(game.ExePath) && File.Exists(game.ExePath))
             {
-                try { Process.Start(new ProcessStartInfo(game.ExePath) { UseShellExecute = true }); }
+                try
+                {
+                    Process.Start(new ProcessStartInfo(game.ExePath)
+                    {
+                        UseShellExecute = false,
+                        WorkingDirectory = Path.GetDirectoryName(game.ExePath) ?? ""
+                    });
+                }
                 catch { }
             }
         }
@@ -432,7 +441,12 @@ public sealed class GameLauncherService
             string? installDir = null;
 
             // 1. Buscar ruta real en C:\ProgramData\Riot Games\Metadata\<key>.live\*.product_settings.yaml
+            // Solo incluir si existe <key>.live.ok (indica que el juego está realmente instalado y no desinstalado)
             string prodMetaDir = Path.Combine(metadataRoot, $"{prod.Key}.live");
+            string okMarker = Path.Combine(prodMetaDir, $"{prod.Key}.live.ok");
+            if (Directory.Exists(prodMetaDir) && !File.Exists(okMarker))
+                continue;
+
             if (Directory.Exists(prodMetaDir))
             {
                 try
@@ -472,12 +486,11 @@ public sealed class GameLauncherService
             string id = $"riot:{prod.Key}";
             var (lastTimeUtc, hasPlayed) = GetRiotLastPlayedUtc(id, prod.Key, installDir, exePath);
 
-            string launchUri = !string.IsNullOrEmpty(riotClientExe) && File.Exists(riotClientExe)
-                ? riotClientExe
-                : exePath;
-            string? launchArgs = !string.IsNullOrEmpty(riotClientExe) && File.Exists(riotClientExe)
-                ? $"--launch-product={prod.Key} --launch-patchline=live"
-                : null;
+            // Para League of Legends, ejecutar directamente LeagueClient.exe abre LoL directo sin quedarse en Riot Client
+            bool useDirectExe = prod.Key.Equals("league_of_legends", StringComparison.OrdinalIgnoreCase) ||
+                                string.IsNullOrEmpty(riotClientExe) || !File.Exists(riotClientExe);
+            string launchUri = useDirectExe ? exePath : riotClientExe!;
+            string? launchArgs = useDirectExe ? null : $"--launch-product={prod.Key} --launch-patchline=live";
 
             BitmapImage? cover;
             lock (_coverCache)
