@@ -121,15 +121,17 @@ Ejecutar `publish\IslaDinamica.exe` y, desde el icono de bandeja, marcar "Inicia
 
 **Objetivo:** Una nueva sección dentro del notch para acceder rápidamente a los últimos juegos sin abrir launchers completos, mediante detección 100% automática.
 
-* \[x\] **Detección automática de recientes (`GameLauncherService.cs`):** Escanea en segundo plano todas las bibliotecas de Steam (`libraryfolders.vdf` + `appmanifest_*.acf`) y cruza cada AppID con `userdata\*\config\localconfig.vdf` (atributo `LastPlayed` con lector de bloques balanceados `{...}`).
-* \[x\] **Nueva pestaña "Juegos":** Integrada en la interfaz expandida junto a Resumen, Música y Descargas.
-* \[x\] **Último juego destacado:** Muestra la carátula panorámica (obtenida de `appcache\librarycache` de Steam o descargada en caché local `%LocalAppData%\IslaDinamica\covers`), título, hace cuánto se jugó y botón **"Jugar ▶"** (`steam://rungameid/<AppId>`).
+* \[x\] **Detección automática multi-launcher (`GameLauncherService.cs`):**
+    * **Steam:** bibliotecas (`libraryfolders.vdf` + `appmanifest_*.acf`) cruzadas con `LastPlayed` en `userdata\*\config\localconfig.vdf` y carátulas de `appcache\librarycache` o CDN.
+    * **Epic Games:** manifiestos `C:\ProgramData\Epic\EpicGamesLauncher\Data\Manifests\*.item`, lectura de última sesión (logs/ejecutables + historial propio en `%LocalAppData%\IslaDinamica\game_history.json`), imágenes Splash o icono nativo del `.exe`, y lanzamiento silencioso `com.epicgames.launcher://apps/...`.
+    * **Riot Games (League of Legends, VALORANT, LoR, 2XKO):** detección vía `C:\ProgramData\Riot Games\Metadata\*.live` (`product_settings.yaml`) y `RiotClientInstalls.json`, lectura de última partida en `%LocalAppData%\VALORANT\Saved\Logs\ShooterGame.log` y `<LoL>\Logs\LeagueClient Logs`, y lanzamiento directo con `RiotClientServices.exe --launch-product=<juego> --launch-patchline=live`.
+* \[x\] **Nueva pestaña "Juegos":** Integrada en la interfaz expandida junto a Resumen, Música y Descargas, con escalado proporcional automático por pantalla (`PositionOnScreen`).
+* \[x\] **Último juego destacado:** Muestra la carátula/icono, insignia con color por plataforma (**Steam** morado `#A78BFA`, **Epic** azul `#38BDF8`, **Riot** rojo `#FF4655`), título, hace cuánto se jugó y botón **"Jugar ▶"**.
 * \[x\] **Lista de recientes (Top 3 siguientes):** Fila inferior de 3 tarjetas compactas con miniatura, nombre y lanzamiento en un clic.
-* \[x\] **Integración de estado con descargas de Steam:** Si el juego destacado se está actualizando en Steam, muestra la barra de progreso y el porcentaje en su propia tarjeta y cambia el botón a **"Ver ⬇"**.
+* \[x\] **Descargas e integración en vivo para Steam, Epic y Riot (`DownloadService.cs`):** Detecta descargas/actualizaciones en curso de Steam (`.acf`), Epic (`*.item` con `bIsIncompleteInstall: true` o `Pending`) y Riot (`Metadata\*.live` con `.lock` o sin `.ok` mientras `RiotClientServices` descarga), mostrándolas tanto en la pestaña **Descargas** como sobre la tarjeta del juego destacado.
 
 ## Pendiente
 
-* \[ \] **Juegos fuera de Steam (opcional):** Añadir detección para Epic Games / accesos directos recientes si se desea ampliar más allá de Steam.
 * \[ \] **`.tmp` en Descargas:** archivos `.tmp` de otras apps pueden dar falsos "Descargando".
 * \[ \] Publicar la extensión en la Chrome Web Store.
 * \[ \] Soporte de Firefox (API `browser.downloads`, extensión aparte).

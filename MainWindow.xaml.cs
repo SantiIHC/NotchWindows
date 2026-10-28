@@ -19,6 +19,8 @@ public partial class MainWindow : Window
 
     static readonly SolidColorBrush s_whiteBrush = CreateFrozenBrush(0xF5, 0xF5, 0xF7);
     static readonly SolidColorBrush s_purpleBrush = CreateFrozenBrush(0xA7, 0x8B, 0xFA);
+    static readonly SolidColorBrush s_riotRedBrush = CreateFrozenBrush(0xFF, 0x46, 0x55);
+    static readonly SolidColorBrush s_epicBlueBrush = CreateFrozenBrush(0x38, 0xBD, 0xF8);
     static readonly SolidColorBrush s_activeTabBg = CreateFrozenBrush(0x28, 0x28, 0x2F);
     static readonly SolidColorBrush s_idleTabBg = CreateFrozenBrush(0x14, 0x14, 0x17);
     static readonly SolidColorBrush s_idleTabFg = CreateFrozenBrush(0x8E, 0x8E, 0x93);
@@ -132,6 +134,7 @@ public partial class MainWindow : Window
             {
                 _batteryTicks = 0;
                 UpdateBattery();
+                _games.CheckRunningGames();
             }
 
             if (++_trimTicks >= 120) // Cada ~60s en reposo compacta el Working Set
@@ -400,10 +403,10 @@ public partial class MainWindow : Window
         if (games.Count == 0)
         {
             FeaturedGameCover.Source = null;
-            FeaturedGameBadge.Text = "STEAM";
+            FeaturedGameBadge.Text = "JUEGOS";
             FeaturedGameBadge.Foreground = s_purpleBrush;
             FeaturedGameTitle.Text = "Sin juegos detectados";
-            FeaturedGameSub.Text = "Instala o abre un juego en Steam para verlo aquí";
+            FeaturedGameSub.Text = "Tus juegos de Steam, Epic y Riot aparecerán aquí";
             FeaturedGameDlTrack.Visibility = Visibility.Collapsed;
             FeaturedPlayBtn.Visibility = Visibility.Collapsed;
             RecentGamesRow.Visibility = Visibility.Collapsed;
@@ -434,10 +437,17 @@ public partial class MainWindow : Window
         }
         var g = games[idx];
         btn.Visibility = Visibility.Visible;
-        btn.ToolTip = $"Jugar {g.Name} ({GameLauncherService.FormatRelativeTime(g.LastPlayedUtc, g.HasRealLastPlayed)})";
+        btn.ToolTip = $"Jugar {g.Name} ({GameLauncherService.FormatRelativeTime(g.LastPlayedUtc, g.HasRealLastPlayed, g.Platform)})";
         img.Source = g.Cover;
         title.Text = g.Name;
     }
+
+    SolidColorBrush GetPlatformBrush(string platform) => platform switch
+    {
+        "Riot" => s_riotRedBrush,
+        "Epic" => s_epicBlueBrush,
+        _ => s_purpleBrush
+    };
 
     void UpdateFeaturedGameStatus()
     {
@@ -450,7 +460,8 @@ public partial class MainWindow : Window
         {
             var accent = _activeSteamPaused ? s_amberBrush : s_greenBrush;
             int pct = (int)Math.Round(_activeSteamFraction * 100);
-            FeaturedGameBadge.Text = _activeSteamPaused ? "ACTUALIZACIÓN EN PAUSA" : "ACTUALIZANDO EN STEAM";
+            string platUpper = feat.Platform.ToUpperInvariant();
+            FeaturedGameBadge.Text = _activeSteamPaused ? $"EN PAUSA · {platUpper}" : $"ACTUALIZANDO EN {platUpper}";
             FeaturedGameBadge.Foreground = accent;
             FeaturedGameSub.Text = $"Descarga en curso · {pct}%";
             FeaturedGameDlTrack.Visibility = Visibility.Visible;
@@ -463,13 +474,14 @@ public partial class MainWindow : Window
         }
         else
         {
-            FeaturedGameBadge.Text = "ÚLTIMO JUGADO";
-            FeaturedGameBadge.Foreground = s_purpleBrush;
-            FeaturedGameSub.Text = GameLauncherService.FormatRelativeTime(feat.LastPlayedUtc, feat.HasRealLastPlayed);
+            var platBrush = GetPlatformBrush(feat.Platform);
+            FeaturedGameBadge.Text = $"ÚLTIMO JUGADO · {feat.Platform.ToUpperInvariant()}";
+            FeaturedGameBadge.Foreground = platBrush;
+            FeaturedGameSub.Text = GameLauncherService.FormatRelativeTime(feat.LastPlayedUtc, feat.HasRealLastPlayed, feat.Platform);
             FeaturedGameDlTrack.Visibility = Visibility.Collapsed;
-            FeaturedPlayBtn.Background = s_purpleBrush;
+            FeaturedPlayBtn.Background = platBrush;
             FeaturedPlayBtnText.Text = "Jugar ▶";
-            FeaturedPlayBtn.ToolTip = $"Ejecutar {feat.Name}";
+            FeaturedPlayBtn.ToolTip = $"Ejecutar {feat.Name} ({feat.Platform})";
         }
     }
 
@@ -483,7 +495,7 @@ public partial class MainWindow : Window
             SelectTab(IslandTab.Downloads, animate: true);
             return;
         }
-        _games.Launch(feat.LaunchUri);
+        _games.Launch(feat);
         Animate(false);
     }
 
@@ -494,7 +506,7 @@ public partial class MainWindow : Window
     void LaunchRecentSlot(int idx)
     {
         if (idx >= _recentGames.Count) return;
-        _games.Launch(_recentGames[idx].LaunchUri);
+        _games.Launch(_recentGames[idx]);
         Animate(false);
     }
 
@@ -892,7 +904,7 @@ public partial class MainWindow : Window
                 }
 
                 SetRingProgress(frac);
-                _activeSteamAppId = u.SourceApp == "Steam" ? u.AppId : null;
+                _activeSteamAppId = u.AppId;
                 _activeSteamFraction = frac;
                 _activeSteamPaused = paused;
                 UpdateFeaturedGameStatus();

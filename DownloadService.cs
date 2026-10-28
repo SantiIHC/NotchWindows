@@ -84,12 +84,14 @@ public class DownloadService : IDisposable
     {
         public string AppId = "";
         public string Name = "";
+        public string SourceApp = "Steam";
         public long AcfBaselineBytes;
         public long EstimatedBytes;
         public long ExtraSinceAcf;   // bytes extrapolados por red desde la última lectura real del .acf
         public long TotalBytes;
         public string InstallDir = "";
         public bool IsPaused;
+        public DateTime LastGrowthUtc = DateTime.UtcNow;
         public DateTime? ManualOverrideUntilUtc;
         public DateTime? MissingSinceUtc;   // desde cuándo no aparece como descarga activa en el manifiesto
     }
@@ -635,6 +637,7 @@ public class DownloadService : IDisposable
             _steamDirty = false;
             _lastSteamScanUtc = t;
             PollSteam(0);
+            PollEpicAndRiot(0);
             return;
         }
 
@@ -649,6 +652,7 @@ public class DownloadService : IDisposable
         _lastNetBytes = currentNetBytes;
 
         PollSteam(netDelta);
+        PollEpicAndRiot(netDelta);
 
         // Con la extensión conectada el navegador informa de verdad: nombre, total, porcentaje y pausa real
         var ext = _bridge.GetActive();
@@ -770,7 +774,7 @@ public class DownloadService : IDisposable
                     currentSteam.InstallDir,
                     TotalBytes: currentSteam.TotalBytes,
                     SpeedBytesPerSec: 0,
-                    SourceApp: "Steam",
+                    SourceApp: currentSteam.SourceApp,
                     AppId: currentSteam.AppId));
             }
             else
@@ -786,7 +790,7 @@ public class DownloadService : IDisposable
                     currentSteam.InstallDir,
                     TotalBytes: currentSteam.TotalBytes,
                     SpeedBytesPerSec: _smoothedSpeed,
-                    SourceApp: "Steam",
+                    SourceApp: currentSteam.SourceApp,
                     AppId: currentSteam.AppId));
             }
         }
@@ -910,6 +914,7 @@ public class DownloadService : IDisposable
                     foreach (var k in _steamTrackers.Keys)
                     {
                         var tr = _steamTrackers[k];
+                        if (tr.SourceApp != "Steam") continue;
                         if (seenIds.Contains(k)) { tr.MissingSinceUtc = null; continue; }
 
                         bool looksComplete = !tr.IsPaused && tr.TotalBytes > 0 && tr.EstimatedBytes >= tr.TotalBytes * 0.95;
@@ -985,6 +990,297 @@ public class DownloadService : IDisposable
             }
         }
         catch { }
+    }
+
+    // ---------- Soporte en tiempo real para Epic Games y Riot Games ----------
+    void PollEpicAndRiot(long netDeltaBytes)
+    {
+        EnsureExternalLauncherWatchers();
+        PollEpicGames(netDeltaBytes);
+        PollRiotGames(netDeltaBytes);
+    }
+
+    bool _externalWatchersInitialized;
+
+    void EnsureExternalLauncherWatchers()
+    {
+        if (_externalWatchersInitialized) return;
+        _externalWatchersInitialized = true;
+
+        string progData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+        string epicManifests = Path.Combine(progData, "Epic", "EpicGamesLauncher", "Data", "Manifests");
+        string riotMeta = Path.Combine(progData, "Riot Games", "Metadata");
+
+        foreach (var (dir, filter, subdirs) in new[]
+        {
+            (epicManifests, "*.item", true),
+            (riotMeta, "*.*", true)
+        })
+        {
+            if (!Directory.Exists(dir) || _steamWatchers.ContainsKey(dir)) continue;
+            try
+            {
+                var w = new FileSystemWatcher(dir, filter)
+                {
+                    IncludeSubdirectories = subdirs,
+                    NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size
+                };
+                w.Changed += (_, _) => _steamDirty = true;
+                w.Created += (_, _) => _steamDirty = true;
+                w.Deleted += (_, _) => _steamDirty = true;
+                w.Renamed += (_, _) => _steamDirty = true;
+                w.EnableRaisingEvents = true;
+                _steamWatchers[dir] = w;
+            }
+            catch { }
+        }
+    }
+
+    void PollEpicGames(long netDeltaBytes)
+    {
+        try
+        {
+            string manifestsDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                "Epic", "EpicGamesLauncher", "Data", "Manifests");
+            if (!Directory.Exists(manifestsDir)) return;
+
+            bool epicRunning = Process.GetProcessesByName("EpicGamesLauncher").Length > 0;
+            var activeIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var completedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var file in Directory.EnumerateFiles(manifestsDir, "*.item", SearchOption.AllDirectories))
+            {
+                try
+                {
+                    string json = File.ReadAllText(file);
+                    using var doc = System.Text.Json.JsonDocument.Parse(json);
+                    var root = doc.RootElement;
+
+                    string appName = root.TryGetProperty("AppName", out var an) ? (an.GetString() ?? "") : "";
+                    string displayName = root.TryGetProperty("DisplayName", out var dn) ? (dn.GetString() ?? "") : "";
+                    if (string.IsNullOrEmpty(appName) || string.IsNullOrEmpty(displayName)) continue;
+
+                    string key = $"epic:{appName}";
+                    bool incomplete = root.TryGetProperty("bIsIncompleteInstall", out var inc) &&
+                                      inc.ValueKind == System.Text.Json.JsonValueKind.True;
+
+                    // Si el archivo está dentro de la subcarpeta Pending, también es una descarga en curso
+                    if (!incomplete && file.Contains("\\Pending\\", StringComparison.OrdinalIgnoreCase))
+                        incomplete = true;
+
+                    if (!incomplete)
+                    {
+                        completedIds.Add(key);
+                        continue;
+                    }
+
+                    if (!epicRunning) continue;
+
+                    long totalSize = root.TryGetProperty("InstallSize", out var isz) && isz.TryGetInt64(out long sz) ? sz : 0;
+                    string installLoc = root.TryGetProperty("InstallLocation", out var il) ? (il.GetString() ?? "") : "";
+
+                    activeIds.Add(key);
+                    lock (_lock)
+                    {
+                        var now = DateTime.UtcNow;
+                        if (!_steamTrackers.TryGetValue(key, out var tr))
+                        {
+                            tr = new SteamLiveTracker
+                            {
+                                AppId = key,
+                                Name = displayName,
+                                SourceApp = "Epic",
+                                TotalBytes = totalSize,
+                                InstallDir = installLoc,
+                                LastGrowthUtc = now
+                            };
+                            _steamTrackers[key] = tr;
+                        }
+                        else
+                        {
+                            tr.Name = displayName;
+                            if (totalSize > 0) tr.TotalBytes = totalSize;
+                            if (!string.IsNullOrEmpty(installLoc)) tr.InstallDir = installLoc;
+                        }
+
+                        if (netDeltaBytes > 4096)
+                        {
+                            tr.LastGrowthUtc = now;
+                            tr.IsPaused = false;
+                            tr.EstimatedBytes = tr.TotalBytes > 0
+                                ? Math.Min(tr.TotalBytes, tr.EstimatedBytes + netDeltaBytes)
+                                : tr.EstimatedBytes + netDeltaBytes;
+                        }
+                        else if ((now - tr.LastGrowthUtc).TotalSeconds >= 6)
+                        {
+                            tr.IsPaused = true;
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            CleanupLauncherTrackers("Epic", activeIds, completedIds);
+        }
+        catch { }
+    }
+
+    void PollRiotGames(long netDeltaBytes)
+    {
+        try
+        {
+            string metaRoot = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                "Riot Games", "Metadata");
+            if (!Directory.Exists(metaRoot)) return;
+
+            bool riotRunning = Process.GetProcessesByName("RiotClientServices").Length > 0;
+            var activeIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var completedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            var products = new (string Key, string Name, string DefaultDir)[]
+            {
+                ("valorant", "VALORANT", @"C:\Riot Games\VALORANT\live"),
+                ("league_of_legends", "League of Legends", @"C:\Riot Games\League of Legends"),
+                ("bacon", "Legends of Runeterra", @"C:\Riot Games\LoR\live"),
+                ("lion", "2XKO", @"C:\Riot Games\2XKO\live")
+            };
+
+            foreach (var prod in products)
+            {
+                string prodDir = Path.Combine(metaRoot, $"{prod.Key}.live");
+                if (!Directory.Exists(prodDir)) continue;
+
+                string id = $"riot:{prod.Key}";
+                string okFile = Path.Combine(prodDir, $"{prod.Key}.live.ok");
+                string lockFile = Path.Combine(prodDir, $"{prod.Key}.live.lock");
+                bool hasOk = File.Exists(okFile);
+                bool hasLock = File.Exists(lockFile);
+
+                if (hasOk && !hasLock)
+                {
+                    completedIds.Add(id);
+                    continue;
+                }
+
+                if (!riotRunning) continue;
+
+                // Está actualizando si existe .lock o falta .ok mientras RiotClientServices está activo
+                activeIds.Add(id);
+                lock (_lock)
+                {
+                    var now = DateTime.UtcNow;
+                    if (!_steamTrackers.TryGetValue(id, out var tr))
+                    {
+                        tr = new SteamLiveTracker
+                        {
+                            AppId = id,
+                            Name = prod.Name,
+                            SourceApp = "Riot",
+                            TotalBytes = 0,
+                            InstallDir = prod.DefaultDir,
+                            LastGrowthUtc = now
+                        };
+                        _steamTrackers[id] = tr;
+                    }
+
+                    if (netDeltaBytes > 4096)
+                    {
+                        tr.LastGrowthUtc = now;
+                        tr.IsPaused = false;
+                        tr.EstimatedBytes += netDeltaBytes;
+                    }
+                    else if ((now - tr.LastGrowthUtc).TotalSeconds >= 6)
+                    {
+                        tr.IsPaused = true;
+                    }
+                }
+            }
+
+            CleanupLauncherTrackers("Riot", activeIds, completedIds);
+        }
+        catch { }
+    }
+
+    void CleanupLauncherTrackers(string sourceApp, HashSet<string> activeIds, HashSet<string> completedIds)
+    {
+        List<SteamLiveTracker>? doneList = null;
+        List<SteamLiveTracker>? cancList = null;
+
+        lock (_lock)
+        {
+            List<string>? toRemove = null;
+            foreach (var kv in _steamTrackers)
+            {
+                var tr = kv.Value;
+                if (tr.SourceApp != sourceApp) continue;
+                if (activeIds.Contains(kv.Key)) { tr.MissingSinceUtc = null; continue; }
+
+                if (!completedIds.Contains(kv.Key))
+                {
+                    tr.MissingSinceUtc ??= DateTime.UtcNow;
+                    if ((DateTime.UtcNow - tr.MissingSinceUtc.Value).TotalSeconds < 8) continue;
+                }
+
+                toRemove ??= new();
+                toRemove.Add(kv.Key);
+            }
+
+            if (toRemove != null)
+            {
+                foreach (var k in toRemove)
+                {
+                    var tr = _steamTrackers[k];
+                    _steamTrackers.Remove(k);
+                    if (completedIds.Contains(k))
+                    {
+                        doneList ??= new();
+                        doneList.Add(tr);
+                    }
+                    else
+                    {
+                        cancList ??= new();
+                        cancList.Add(tr);
+                    }
+                }
+            }
+        }
+
+        if (doneList != null)
+        {
+            foreach (var d in doneList)
+            {
+                int left;
+                lock (_lock) left = _active.Count + _steamTrackers.Count;
+                Changed?.Invoke(new DownloadUpdate(
+                    DownloadStatus.Completed,
+                    d.Name,
+                    d.TotalBytes > 0 ? d.TotalBytes : d.EstimatedBytes,
+                    left,
+                    Directory.Exists(d.InstallDir) ? d.InstallDir : null,
+                    TotalBytes: d.TotalBytes,
+                    SourceApp: d.SourceApp,
+                    AppId: d.AppId));
+            }
+        }
+
+        if (cancList != null)
+        {
+            foreach (var c in cancList)
+            {
+                int left;
+                lock (_lock) left = _active.Count + _steamTrackers.Count;
+                Changed?.Invoke(new DownloadUpdate(
+                    DownloadStatus.Cancelled,
+                    c.Name,
+                    0,
+                    left,
+                    null,
+                    SourceApp: c.SourceApp,
+                    AppId: c.AppId));
+            }
+        }
     }
 
     (HashSet<string> Suspended, HashSet<string> Uninstalled) GetAppStatesFromSteamLog(string steamRoot)
